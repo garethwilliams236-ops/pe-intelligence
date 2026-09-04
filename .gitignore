@@ -1,0 +1,31 @@
+# Generated seed SQL — contains internal contact details from the master list.
+# Regenerate with scripts/wp2_load_master_list.py; never commit it.
+out/
+*.xlsx
+*.xls
+
+# Supabase CLI
+.branches/
+.temp/
+supabase/.temp/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+.vercel/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
