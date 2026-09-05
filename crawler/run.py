@@ -97,13 +97,19 @@ def cmd_probe(args) -> int:
 # ---------------------------------------------------------------------------
 # crawl — fetch, store, extract heuristically
 # ---------------------------------------------------------------------------
-def _store_and_extract(conn, fetcher, run_id, source, target, page, kind, depth, stats) -> None:
+def _store_and_extract(conn, fetcher, run_id, source, target, page, kind, depth, stats):
+    """Store the page and extract from it. Returns (document_id, Extracted|None)."""
     existing = db.find_document(conn, page.canonical_url, page.content_hash)
     if existing:
         stats["unchanged"] += 1
         db.record_item(conn, run_id, page.url, page.canonical_url, depth,
                        "unchanged", page.status, page.content_hash, existing)
-        return
+        # Still extract, even though the page has not changed. Claims are
+        # deduped on insert, and a later pass (detail pages, a better
+        # extractor) must be able to work from pages already stored.
+        if kind in KIND_TO_ATTRIBUTE and target.get("company_id"):
+            return existing, extract.run_heuristic(kind, page.html, page.canonical_url)
+        return existing, None
 
     document_id = db.insert_document(
         conn, source_id=source, url=page.url, canonical_url=page.canonical_url,
@@ -114,11 +120,11 @@ def _store_and_extract(conn, fetcher, run_id, source, target, page, kind, depth,
                    "parsed", page.status, page.content_hash, document_id)
 
     if kind not in KIND_TO_ATTRIBUTE or not target.get("company_id"):
-        return
+        return document_id, None
 
     found = extract.run_heuristic(kind, page.html, page.canonical_url)
     if not found.items:
-        return
+        return document_id, found
     extraction_id = db.start_extraction(conn, document_id, "heuristic", None, extract.VERSION)
     written = 0
     for item in found.items:
@@ -139,6 +145,70 @@ def _store_and_extract(conn, fetcher, run_id, source, target, page, kind, depth,
             written += 1
     db.finish_extraction(conn, extraction_id, "ok", written)
     stats["claims"] += written
+    return document_id, found
+
+
+def _crawl_details(conn, fetcher, run_id, source, target, items, limit, stats, verbose):
+    """Fetch each portfolio company's own page for the dates the index omits.
+
+    The pilot found zero years across 365 index-page claims: sponsors publish the
+    investment date on the company page, not the grid. One fetch per company is
+    the cost of having dates at all.
+    """
+    done = 0
+    for item in items:
+        if done >= limit:
+            break
+        url = item.get("url")
+        if not url:
+            continue
+        page = fetcher.get(url)
+        stats["seen"] += 1
+        if page is None:
+            continue
+        stats["fetched"] += 1
+        done += 1
+
+        # An unchanged page still gets extracted: the extractor improves over
+        # time and must be able to re-derive claims from pages already stored.
+        # Claims dedupe on insert, so repeating this is free.
+        existing = db.find_document(conn, page.canonical_url, page.content_hash)
+        if existing:
+            stats["unchanged"] += 1
+            document_id = existing
+            db.record_item(conn, run_id, page.url, page.canonical_url, 2,
+                           "unchanged", page.status, page.content_hash, existing)
+        else:
+            document_id = db.insert_document(
+                conn, source_id=source, url=page.url, canonical_url=page.canonical_url,
+                title=page.title, http_status=page.status, content_type=page.content_type,
+                content_hash=page.content_hash, text=page.text, byte_size=page.byte_size)
+            stats["documents"] += 1
+            db.record_item(conn, run_id, page.url, page.canonical_url, 2,
+                           "parsed", page.status, page.content_hash, document_id)
+
+        facts = extract.detail(page.text, page.title)
+        if not any([facts["entry_year"], facts["exit_year"], facts["status"], facts["sector"]]):
+            continue
+        facts["url"] = page.canonical_url
+        facts["company"] = item["name"]
+        extraction_id = db.start_extraction(conn, document_id, "heuristic_detail",
+                                            None, extract.VERSION)
+        # Labelled dates are worth more than a bare year found on the page.
+        confidence = 0.700 if facts.get("date_confidence") == "labelled" else 0.450
+        wrote = db.insert_claim(
+            conn, subject_table="investors", subject_id=target["company_id"],
+            subject_key=None, attribute="portfolio_company_dates",
+            value_text=item["name"], value_json=facts, confidence=confidence,
+            extracted_by="heuristic_detail", extraction_version=extract.VERSION,
+            document_id=document_id, quote=facts.get("evidence"))
+        db.finish_extraction(conn, extraction_id, "ok", 1 if wrote else 0)
+        if wrote:
+            stats["claims"] += 1
+        if verbose:
+            print(f"      {item['name'][:34]:34s} "
+                  f"{facts['entry_year'] or '----'} -> {facts['exit_year'] or '----'} "
+                  f"{facts.get('date_confidence') or ''}")
 
 
 def cmd_crawl(args) -> int:
@@ -197,8 +267,12 @@ def cmd_crawl(args) -> int:
                                            normalise_url(candidate.url), 1, "failed")
                             continue
                         stats["fetched"] += 1
-                        _store_and_extract(conn, fetcher, run_id, source, target, page,
-                                           candidate.kind, 1, stats)
+                        _, found = _store_and_extract(conn, fetcher, run_id, source,
+                                                      target, page, candidate.kind, 1, stats)
+                        if (args.details and found
+                                and found.kind == "portfolio_company" and found.items):
+                            _crawl_details(conn, fetcher, run_id, source, target,
+                                           found.items, args.details, stats, args.verbose)
 
                     db.finish_run(conn, run_id, "parsed", stats)
                     db.mark_target_run(conn, target["id"], target["frequency_hours"])
@@ -383,6 +457,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("crawl", help="fetch, store and extract")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--triggered-by", default="manual")
+    p.add_argument("--details", type=int, default=0,
+                   help="fetch up to N portfolio company pages per house for dates")
     p.add_argument("--verbose", action="store_true")
     p.set_defaults(func=cmd_crawl)
 

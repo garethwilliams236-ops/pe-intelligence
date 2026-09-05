@@ -38,6 +38,73 @@ _TITLE_HINT = re.compile(
     r"partner|principal|director|associate|analyst|manager|chair|"
     r"chief|head of|founder|counsel|controller|investor relations", re.I)
 
+# Some houses anonymise their index ("Global natural stone company") or append a
+# tagline ("AppCheck: helping businesses strengthen cyber resilience"). Neither
+# is a company name, and storing them as one poisons entity resolution later.
+_DESCRIPTION_TAIL = re.compile(
+    r"\b(compan(y|ies)|provider|business(es)?|group of|manufacturer|operator|"
+    r"specialist|supplier|distributor|platform|solutions?|services?)\s*$", re.I)
+_DESCRIPTION_LEAD = re.compile(
+    r"^(a|an|the|global|leading|international|european|uk|world'?s)\b", re.I)
+_LABEL_NOISE = re.compile(
+    r"\s*(exit date|date of exit|investment date|date of investment|status)\s*:?.*$", re.I)
+
+
+def looks_like_description(label: str) -> bool:
+    """True when the label reads as prose about a company, not its name."""
+    words = label.split()
+    if len(words) < 3:
+        return False
+    if _DESCRIPTION_TAIL.search(label) and _DESCRIPTION_LEAD.match(label):
+        return True
+    lowers = sum(1 for w in words[1:] if w[:1].islower())
+    # "Leading provider of telecare" — a description opener followed by nothing
+    # capitalised. A real name keeps its capitals ("The Access Group").
+    if _DESCRIPTION_LEAD.match(label) and lowers == len(words) - 1:
+        return True
+    # Sentence-like: mostly lowercase words after the first.
+    return len(words) >= 5 and lowers >= len(words) - 2
+
+
+# "BCNBCN is a UK-focussed IT managed services provider" — the anchor ran the
+# name into its own description with no separator, and doubled it doing so.
+_RUNS_INTO_PROSE = re.compile(
+    r"^(.{2,60}?)\s+(?:is|are|was|were|provides?|offers?|delivers?|supplies|"
+    r"specialis\w+|specializ\w+|operates?|helps?)\s+", re.I)
+
+
+def _undouble(token: str) -> str:
+    """'BCNBCN' -> 'BCN'. Only for a single word, and only when each half is
+    long enough that the repeat cannot be a coincidence like 'Isis'."""
+    if " " in token or len(token) % 2 or len(token) < 6:
+        return token
+    half = len(token) // 2
+    return token[:half] if token[:half].lower() == token[half:].lower() else token
+
+
+def tidy_name(label: str | None) -> str | None:
+    """Strip label noise and taglines; reject prose."""
+    if not label:
+        return None
+    label = _LABEL_NOISE.sub("", label).strip(" -–—:·|")
+    run_on = _RUNS_INTO_PROSE.match(label)
+    if run_on:
+        # Only trust this when what precedes the verb is short enough to be a
+        # name rather than a clause.
+        head = run_on.group(1).strip()
+        if len(head.split()) <= 5:
+            label = _undouble(head)
+    # "AppCheck: helping businesses to ..." -> "AppCheck", but only when the
+    # head is short and the tail is long enough to be a tagline.
+    if ":" in label:
+        head, _, tail = label.partition(":")
+        head, tail = head.strip(), tail.strip()
+        if head and len(head.split()) <= 4 and len(tail.split()) >= 3:
+            label = head
+    if not label or looks_like_description(label):
+        return None
+    return label
+
 
 @dataclass
 class Extracted:
@@ -133,7 +200,15 @@ def portfolio(html: str, base_url: str) -> Extracted:
     out: list[dict] = []
     seen: set[str] = set()
     for node, url, anchor in _detail_anchors(html, base_url, "portfolio"):
-        name = _label_for(node, url, anchor)
+        name = tidy_name(_label_for(node, url, anchor, slug_fallback=False))
+        if not name:
+            # Anonymised or prose label — fall back to the URL slug, which is
+            # usually the real name even when the visible text is not.
+            slug = url.rstrip("/").rsplit("/", 1)[-1]
+            slug = re.sub(r"\.(html?|php|aspx)$", "", slug, flags=re.I)
+            slug = re.sub(r"[-_]+", " ", slug).strip()
+            name = slug.title() if slug and not slug.isdigit() else None
+            name = tidy_name(name)
         if not name or name.lower() in seen:
             continue
         seen.add(name.lower())
@@ -235,3 +310,78 @@ def run_llm(kind: str, text: str) -> Extracted:
     resolved = "portfolio_company" if kind == "portfolio_index" else "team_member"
     cleaned = [i for i in items if isinstance(i, dict) and _clean(str(i.get("name", "")))]
     return Extracted(kind=resolved, items=cleaned, method="llm")
+
+
+# ---------------------------------------------------------------------------
+# Detail pages
+#
+# The pilot established that index pages carry descriptions, not dates: of 365
+# portfolio claims, zero had a year. Sponsors publish the investment date on the
+# company's own page, usually as a labelled field. This reads those labels, and
+# falls back to bare years only when it can mark the result as weaker evidence.
+# ---------------------------------------------------------------------------
+_ENTRY_LABEL = re.compile(
+    r"(date of investment|investment date|invested(?: in)?|date invested|acquired|"
+    r"entry date|first invested|original investment|backed|partnered)"
+    r"[^0-9]{0,30}((?:19|20)\d{2})", re.I)
+_EXIT_LABEL = re.compile(
+    r"(date of exit|exit date|exited(?: in)?|realised in|realized in|"
+    r"sold(?: to)?|divested|disposal)[^0-9]{0,25}((?:19|20)\d{2})", re.I)
+_SECTOR_LABEL = re.compile(
+    r"(?:sector|industry|vertical)[ \t]*[:\-–][ \t]*"
+    r"([A-Za-z][\w &/,'-]{1,40}?)(?=\s{2,}|[\n.;|]|$)", re.I)
+_STATUS_REALISED = re.compile(
+    r"\b(realis(ed|ation)|realiz(ed|ation)|exited|former (investment|portfolio)|"
+    r"past investment)\b", re.I)
+_STATUS_CURRENT = re.compile(
+    r"\b(current (investment|portfolio)|active investment|portfolio company)\b", re.I)
+
+
+def detail(text: str, title: str | None = None) -> dict:
+    """Pull dates, status and sector from one portfolio company's page."""
+    blob = re.sub(r"\s+", " ", text or "")[:20000]
+    result: dict = {
+        "entry_year": None, "exit_year": None, "status": None,
+        "sector": None, "evidence": None, "date_confidence": None,
+    }
+
+    entry = _ENTRY_LABEL.search(blob)
+    if entry:
+        result["entry_year"] = int(entry.group(2))
+        result["evidence"] = blob[max(0, entry.start() - 40):entry.end() + 40].strip()
+        result["date_confidence"] = "labelled"
+
+    exit_match = _EXIT_LABEL.search(blob)
+    if exit_match:
+        result["exit_year"] = int(exit_match.group(2))
+        result["status"] = "realised"
+        if not result["evidence"]:
+            result["evidence"] = blob[max(0, exit_match.start() - 40):exit_match.end() + 40].strip()
+            result["date_confidence"] = "labelled"
+
+    # Fallback: bare years, only when no label was found. Flagged as weaker so
+    # promotion can treat it differently rather than trusting it equally.
+    if result["entry_year"] is None:
+        years = sorted({int(y) for y in _YEAR.findall(blob)})
+        if len(years) == 1:
+            result["entry_year"] = years[0]
+            result["date_confidence"] = "bare_year"
+        elif len(years) == 2:
+            result["entry_year"], result["exit_year"] = years
+            result["date_confidence"] = "bare_year"
+
+    if result["status"] is None:
+        if _STATUS_REALISED.search(blob):
+            result["status"] = "realised"
+        elif _STATUS_CURRENT.search(blob):
+            result["status"] = "current"
+
+    # against the raw text, not the collapsed blob — see _SECTOR_LABEL
+    sector = _SECTOR_LABEL.search(text or "")
+    if sector:
+        result["sector"] = sector.group(1).strip(" -–,")
+
+    if result["entry_year"] and result["exit_year"] and result["exit_year"] < result["entry_year"]:
+        result["entry_year"], result["exit_year"] = result["exit_year"], result["entry_year"]
+
+    return result

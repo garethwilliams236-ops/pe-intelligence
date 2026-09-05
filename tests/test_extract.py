@@ -139,6 +139,82 @@ fails += not check("equistone: two levels deep, different section",
     [i["name"] for i in portfolio(EQUISTONE, "https://x.com/investments").items],
     ["SF-Filter", "Virgin Experience Days", "eperi"])
 
+# --- name quality, from real pilot output --------------------------------
+from crawler.extract import tidy_name, looks_like_description
+
+for label, want in [
+    ("Global natural stone companyExit date: Realised", None),   # Charterhouse
+    ("Global engineering company based in FranceExit date: Realised", None),
+    ("AppCheck: helping businesses to strengthen cyber resilience", "AppCheck"),  # LDC
+    ("Turnkey", "Turnkey"),
+    ("Loch Lomond Group", "Loch Lomond Group"),
+    ("Audley Travel", "Audley Travel"),
+    ("Trs East End Foods", "Trs East End Foods"),
+    ("E. Winkemann", "E. Winkemann"),
+    ("Lloyd\u2019s List Intelligence", "Lloyd\u2019s List Intelligence"),
+]:
+    fails += not check(f"tidy_name({label[:38]!r})", tidy_name(label), want)
+
+CHARTERHOUSE = """<html><body>
+<a href="/portfolio/">Portfolio</a>
+<a href="/portfolio/sepur">Global natural stone company<span>Exit date: Realised</span></a>
+<a href="/portfolio/nuvia-group">Global engineering company based in France<span>Exit date: Realised</span></a>
+<a href="/portfolio/tunstall-healthcare">Leading provider of telecare<span>Exit date: Realised</span></a>
+</body></html>"""
+
+fails += not check("charterhouse: anonymised labels fall back to slug",
+    [i["name"] for i in portfolio(CHARTERHOUSE, "https://x.com/portfolio").items],
+    ["Sepur", "Nuvia Group", "Tunstall Healthcare"])
+
+# --- detail-page date extraction -----------------------------------------
+from crawler.extract import detail
+
+LABELLED = ("Northbank Software  Business Services  Date of investment: March 2018  "
+            "Exit date: July 2023  Sector: Software  Inflexion backed the management team.")
+PROSE    = ("We invested in Harbour Diagnostics in 2021 to support its buy-and-build "
+            "strategy across European laboratory services.")
+REALISED = ("Kestrel Analytics  Realised  We acquired Kestrel in 2016 and sold to "
+            "a trade buyer in 2022.")
+NO_DATES = "Pelham Logistics is a leading provider of cold-chain logistics in the UK."
+BACKWARDS = "Exit date: 2015  Date of investment: 2019"
+
+d = detail(LABELLED)
+fails += not check("detail: labelled entry year", d["entry_year"], 2018)
+fails += not check("detail: labelled exit year", d["exit_year"], 2023)
+fails += not check("detail: status from exit", d["status"], "realised")
+fails += not check("detail: sector label", d["sector"], "Software")
+fails += not check("detail: marked as labelled", d["date_confidence"], "labelled")
+
+d = detail(PROSE)
+fails += not check("detail: prose 'invested in ... in 2021'", d["entry_year"], 2021)
+
+d = detail(REALISED)
+fails += not check("detail: acquired year", d["entry_year"], 2016)
+fails += not check("detail: sold year", d["exit_year"], 2022)
+
+d = detail(NO_DATES)
+fails += not check("detail: no dates stays null", (d["entry_year"], d["exit_year"]), (None, None))
+
+d = detail(BACKWARDS)
+fails += not check("detail: swaps inverted years", (d["entry_year"], d["exit_year"]), (2015, 2019))
+
+d = detail("Founded in 1994. Something else entirely.")
+fails += not check("detail: lone bare year flagged weaker", d["date_confidence"], "bare_year")
+
+# --- run-on names, from the ECI detail run --------------------------------
+for label, want in [
+    ("BCNBCN is a UK-focussed IT managed services provider", "BCN"),
+    ("Moneypenny is the world's leading provider of call answering", "Moneypenny"),
+    ("Croud", "Croud"),
+    ("Insurance Insider", "Insurance Insider"),
+    ("Independent Governance Group", "Independent Governance Group"),
+    ("Isis", "Isis"),          # must not be undoubled to "Is"
+    ("Bonbon", "Bonbon"),      # nor this to "Bon"
+    ("CMap", "CMap"),
+    ("IO", "IO"),
+]:
+    fails += not check(f"run-on name {label[:34]!r}", tidy_name(label), want)
+
 print()
 print("ALL PASS" if fails == 0 else f"{fails} FAILURE(S)")
 sys.exit(1 if fails else 0)
