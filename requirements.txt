@@ -1,0 +1,5 @@
+httpx>=0.27
+selectolax>=0.3.21
+psycopg[binary]>=3.2
+openpyxl>=3.1
+anthropic>=0.40   # only needed for `crawler.run extract --llm`
