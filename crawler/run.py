@@ -99,25 +99,24 @@ def cmd_probe(args) -> int:
 # ---------------------------------------------------------------------------
 def _store_and_extract(conn, fetcher, run_id, source, target, page, kind, depth, stats):
     """Store the page and extract from it. Returns (document_id, Extracted|None)."""
+    # Changed or unchanged, the page is extracted and its claims written. An
+    # unchanged page must still yield claims: the extractor improves, and after
+    # a claims rebuild there is nothing to dedupe against. Storing the document
+    # is the only step that depends on the content having changed.
     existing = db.find_document(conn, page.canonical_url, page.content_hash)
     if existing:
         stats["unchanged"] += 1
+        document_id = existing
         db.record_item(conn, run_id, page.url, page.canonical_url, depth,
                        "unchanged", page.status, page.content_hash, existing)
-        # Still extract, even though the page has not changed. Claims are
-        # deduped on insert, and a later pass (detail pages, a better
-        # extractor) must be able to work from pages already stored.
-        if kind in KIND_TO_ATTRIBUTE and target.get("company_id"):
-            return existing, extract.run_heuristic(kind, page.html, page.canonical_url)
-        return existing, None
-
-    document_id = db.insert_document(
-        conn, source_id=source, url=page.url, canonical_url=page.canonical_url,
-        title=page.title, http_status=page.status, content_type=page.content_type,
-        content_hash=page.content_hash, text=page.text, byte_size=page.byte_size)
-    stats["documents"] += 1
-    db.record_item(conn, run_id, page.url, page.canonical_url, depth,
-                   "parsed", page.status, page.content_hash, document_id)
+    else:
+        document_id = db.insert_document(
+            conn, source_id=source, url=page.url, canonical_url=page.canonical_url,
+            title=page.title, http_status=page.status, content_type=page.content_type,
+            content_hash=page.content_hash, text=page.text, byte_size=page.byte_size)
+        stats["documents"] += 1
+        db.record_item(conn, run_id, page.url, page.canonical_url, depth,
+                       "parsed", page.status, page.content_hash, document_id)
 
     if kind not in KIND_TO_ATTRIBUTE or not target.get("company_id"):
         return document_id, None

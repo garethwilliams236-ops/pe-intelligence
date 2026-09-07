@@ -23,7 +23,11 @@ from selectolax.parser import HTMLParser
 
 from .discover import detail_links
 
-VERSION = "1"
+# Bump this whenever the extractor changes what it would produce from the same
+# page. Claims record it, so a stale vintage can be found and re-derived rather
+# than silently coexisting with newer ones — which is exactly what went wrong
+# after the name fixes: prose names from v1 sat alongside slug names from v2.
+VERSION = "2"
 
 _JUNK_LABEL = re.compile(
     r"^(read|find out|learn|view|see|more|discover|explore|visit)\b"
