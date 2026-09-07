@@ -24,7 +24,15 @@ def dsn() -> str:
 
 @contextmanager
 def connect() -> Iterator[psycopg.Connection]:
-    with psycopg.connect(dsn(), row_factory=dict_row, autocommit=False) as conn:
+    # pg_trgm lives in the `extensions` schema on Supabase, so its `%` operator
+    # is unresolvable without it on the search path — and falling back to
+    # similarity() alone would stop the GIN index being used.
+    with psycopg.connect(
+        dsn(),
+        row_factory=dict_row,
+        autocommit=False,
+        options="-c search_path=public,extensions",
+    ) as conn:
         yield conn
 
 

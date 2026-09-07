@@ -17,7 +17,7 @@ import argparse
 import sys
 import traceback
 
-from . import db, extract
+from . import db, extract, promote
 from .discover import index_pages
 from .fetch import Fetcher, domain_of, normalise_url
 
@@ -413,6 +413,30 @@ def cmd_survey(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# promote — claims become investments
+# ---------------------------------------------------------------------------
+def cmd_promote(args) -> int:
+    with db.connect() as conn:
+        if args.undo:
+            rows = db.all_rows(conn, "select * from public.undo_promotion_run(%s)", (args.undo,))
+            conn.commit()
+            for row in rows:
+                print(f"  deleted {row['deleted_count']:5d}  {row['deleted_table']}")
+            return 0
+        stats = promote.run(conn, limit=args.limit, investor=args.investor,
+                            dry_run=args.dry_run, verbose=args.verbose)
+    print()
+    for key in ("considered", "linked", "created", "ambiguous", "skipped", "investments"):
+        print(f"  {key:12s} {stats[key]}")
+    if args.dry_run:
+        print("\n  dry run — nothing written. Drop --dry-run to apply.")
+    else:
+        print(f"\n  run_id {stats['run_id']}"
+              f"\n  undo with: crawler.run promote --undo {stats['run_id']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 def cmd_status(args) -> int:
     with db.connect() as conn:
         for label, sql in [
@@ -470,6 +494,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--any", action="store_true", help="include disabled targets")
     p.set_defaults(func=cmd_survey)
+
+    p = sub.add_parser("promote", help="turn candidate claims into investments")
+    p.add_argument("--limit", type=int, default=500)
+    p.add_argument("--investor", help="only this house (substring of its name)")
+    p.add_argument("--dry-run", action="store_true", help="decide but write nothing")
+    p.add_argument("--verbose", action="store_true")
+    p.add_argument("--undo", metavar="RUN_ID", help="reverse a previous promotion run")
+    p.set_defaults(func=cmd_promote)
 
     p = sub.add_parser("status", help="counts and recent runs")
     p.set_defaults(func=cmd_status)

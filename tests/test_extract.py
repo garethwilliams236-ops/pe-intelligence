@@ -215,6 +215,21 @@ for label, want in [
 ]:
     fails += not check(f"run-on name {label[:34]!r}", tidy_name(label), want)
 
+# --- promotion name containment ------------------------------------------
+from crawler.promote import _contains_name, _tokens
+
+for claim, cand, want in [
+    ("sedex", "sedex information exchange", True),    # trading name heads legal name
+    ("moneypenny", "moneypenny", True),
+    ("croud", "croud media", True),
+    ("harvest", "spring harvest foods", False),       # present but not leading
+    ("acme group", "acme", False),                    # claim longer than candidate
+    ("io", "io technology", True),                    # length guard lives elsewhere
+    ("", "anything", False),
+]:
+    fails += not check(f"contains {claim!r} in {cand!r}",
+                       _contains_name(_tokens(claim), _tokens(cand)), want)
+
 print()
 print("ALL PASS" if fails == 0 else f"{fails} FAILURE(S)")
 sys.exit(1 if fails else 0)

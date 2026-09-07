@@ -347,6 +347,7 @@ def detail(text: str, title: str | None = None) -> dict:
     result: dict = {
         "entry_year": None, "exit_year": None, "status": None,
         "sector": None, "evidence": None, "date_confidence": None,
+        "status_evidence": None,
     }
 
     entry = _ENTRY_LABEL.search(blob)
@@ -374,11 +375,23 @@ def detail(text: str, title: str | None = None) -> dict:
             result["entry_year"], result["exit_year"] = years
             result["date_confidence"] = "bare_year"
 
+    # Status only when something actually supports it. A bare keyword match
+    # over the whole page is not support: "Realisations" is a navigation item
+    # on most sponsor sites, which is how Beech Tree ended up with 15 realised
+    # investments and no current ones. An exit year is real evidence; a status
+    # phrase sitting next to the company's own name is weak but usable; a word
+    # in the chrome is nothing.
     if result["status"] is None:
-        if _STATUS_REALISED.search(blob):
-            result["status"] = "realised"
-        elif _STATUS_CURRENT.search(blob):
-            result["status"] = "current"
+        match = _STATUS_REALISED.search(blob) or _STATUS_CURRENT.search(blob)
+        if match:
+            window = blob[max(0, match.start() - 120):match.end() + 120]
+            near_investment = re.search(
+                r"\b(invest\w*|acquir\w*|back\w*|portfolio|holding|stake|sold|exit\w*)\b",
+                window, re.I)
+            if near_investment and title and title.split()[0].lower() in window.lower():
+                result["status"] = ("realised" if _STATUS_REALISED.match(match.group(0))
+                                    else "current")
+                result["status_evidence"] = window.strip()
 
     # against the raw text, not the collapsed blob — see _SECTOR_LABEL
     sector = _SECTOR_LABEL.search(text or "")
