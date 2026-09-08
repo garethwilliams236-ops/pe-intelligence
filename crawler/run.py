@@ -17,7 +17,7 @@ import argparse
 import sys
 import traceback
 
-from . import db, extract, promote
+from . import db, enrich, extract, promote
 from .discover import index_pages
 from .fetch import Fetcher, domain_of, normalise_url
 
@@ -437,6 +437,22 @@ def cmd_promote(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# enrich — match against Companies House
+# ---------------------------------------------------------------------------
+def cmd_enrich(args) -> int:
+    with db.connect() as conn:
+        if args.accept:
+            stats = enrich.accept(conn, min_score=args.min_score, dry_run=args.dry_run)
+        else:
+            stats = enrich.search_and_record(conn, limit=args.limit,
+                                             dry_run=args.dry_run, verbose=args.verbose)
+    print()
+    for key, value in stats.items():
+        print(f"  {key:12s} {value}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 def cmd_status(args) -> int:
     with db.connect() as conn:
         for label, sql in [
@@ -502,6 +518,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--undo", metavar="RUN_ID", help="reverse a previous promotion run")
     p.set_defaults(func=cmd_promote)
+
+    p = sub.add_parser("enrich", help="match companies to Companies House")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--accept", action="store_true",
+                   help="promote confident match claims to identifiers and sectors")
+    p.add_argument("--min-score", type=float, default=enrich.ACCEPT_SCORE)
+    p.add_argument("--verbose", action="store_true")
+    p.set_defaults(func=cmd_enrich)
 
     p = sub.add_parser("status", help="counts and recent runs")
     p.set_defaults(func=cmd_status)
