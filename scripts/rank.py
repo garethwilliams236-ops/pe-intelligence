@@ -30,7 +30,7 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -118,7 +118,10 @@ def mandate(conn, code: str) -> dict | None:
         """
         select m.id, m.code, m.name, m.mandate_type, m.country_code,
                m.revenue_gbp, m.ebitda_gbp, m.expected_ev_gbp,
-               m.business_description, s.name as sector
+               m.business_description, m.hard_filters,
+               coalesce(m.required_country_codes,
+                        array[m.country_code]::char(2)[]) as required_countries,
+               s.name as sector
         from public.mandates m
         left join public.sectors s on s.id = m.sector_id
         where m.code = %s
@@ -134,9 +137,12 @@ def candidates(conn) -> list[dict]:
         select i.company_id, c.legal_name, c.country_code,
                i.min_cheque_raw, i.max_cheque_raw, i.cheque_currency,
                array_remove(array_agg(distinct s.strategy::text), null) as strategies,
-               array_remove(array_agg(distinct sec.name), null) as focus
+               array_remove(array_agg(distinct sec.name), null) as focus,
+               max(gr.grade) as grade,
+               bool_or(gr.never_approach) as never_approach
         from public.investors i
         join public.companies c on c.id = i.company_id
+        left join public.v_investor_current_grade gr on gr.company_id = i.company_id
         left join public.investor_strategies s on s.company_id = i.company_id
         left join public.investor_sector_focus f on f.company_id = i.company_id
         left join public.sectors sec on sec.id = f.sector_id
@@ -201,6 +207,45 @@ def named_matches(blob: str, wanted: set[str], limit: int = 3) -> list[str]:
             if name and name not in hits:
                 hits.append(name)
     return hits
+
+
+def excluded_by(m: dict, inv: dict, wanted_concepts: set[str]) -> str | None:
+    """Absolute disqualifications, checked before any scoring.
+
+    A fund outside the mandate's geography is not a 40%-good answer, it is not
+    an answer, and a strong sector score must not be able to drag it back in.
+    Which criteria are absolute is the mandate's decision, not the engine's.
+
+    Every exclusion is returned with its reason so the run can report what it
+    threw away — a ranking that silently drops candidates is not auditable.
+    """
+    if inv.get("never_approach"):
+        return "graded never-approach"
+
+    hard = set(m.get("hard_filters") or [])
+    if "geography" in hard:
+        required = [c for c in (m.get("required_countries") or []) if c]
+        if required:
+            if not inv.get("country_code"):
+                return "geography unknown"
+            if inv["country_code"] not in required:
+                return f"outside {'/'.join(required)}"
+
+    if "sector" in hard and wanted_concepts:
+        focus = [f for f in (inv.get("focus") or []) if f]
+        if not focus:
+            return "no stated sector focus"
+        if not (concepts(keywords(" ".join(focus))) & wanted_concepts):
+            return "sector mismatch"
+
+    if "size" in hard:
+        target = m.get("expected_ev_gbp") or m.get("revenue_gbp")
+        lo, hi = inv.get("min_cheque_raw"), inv.get("max_cheque_raw")
+        if target and lo is not None and hi is not None:
+            if not (float(lo) <= float(target) <= float(hi)):
+                return "cheque range excludes the mandate"
+
+    return None
 
 
 def score(m: dict, inv: dict, port: dict | None, wanted: set[str],
@@ -308,12 +353,23 @@ def run(conn, code: str, top: int, apply: bool) -> int:
 
     port = portfolios(conn)
     rows = candidates(conn)
-    scored = []
+    scored, excluded = [], Counter()
     for inv in rows:
+        reason = excluded_by(m, inv, wanted_concepts)
+        if reason:
+            excluded[reason] += 1
+            continue
         s = score(m, inv, port.get(str(inv["company_id"])), wanted, wanted_concepts)
         if s["stated"] <= 0 and not s["revealed"]:
             continue
         scored.append({**inv, **s})
+
+    if excluded:
+        print(f"  hard filters ({', '.join(sorted(set(m.get('hard_filters') or [])))}) "
+              f"excluded {sum(excluded.values())}:")
+        for reason, n in excluded.most_common(6):
+            print(f"      {reason:34s} {n}")
+        print()
 
     # Stated fit ranks the universe; revealed fit breaks ties and corroborates.
     # Adding them would rank the crawl schedule, not the investors.
@@ -323,8 +379,9 @@ def run(conn, code: str, top: int, apply: bool) -> int:
 
     for rank, r in enumerate(scored[:top], 1):
         ev = f"{r['revealed']:.2f}" if r["revealed"] is not None else "  — "
+        grade = f"  grade {r['grade'].upper()}" if r.get("grade") else ""
         print(f"  {rank:2d}. {r['legal_name'][:34]:34s} stated {r['stated']:.2f}   "
-              f"evidence {ev}  ({r['holdings']} holdings)")
+              f"evidence {ev}  ({r['holdings']} holdings){grade}")
         for signal, why in list(r["reasons"].items())[:3]:
             print(f"        {signal:18s} {why[:96]}")
 
