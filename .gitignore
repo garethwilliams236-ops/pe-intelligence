@@ -29,3 +29,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 .idea/
+
+# Never commit — service role key bypasses RLS
+.env.local
+web/.env.local
+web/node_modules/
+web/.next/
