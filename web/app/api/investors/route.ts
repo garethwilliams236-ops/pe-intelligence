@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, selectAll } from "@/lib/db";
 import { COMPANY_KEYS, PATCHABLE, sameValue } from "@/lib/fields";
+import { requireEditor, requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 // GET            -> the whole universe, for the control-sheet grid
 // GET ?id=<uuid> -> one fund plus its team and change history
 export async function GET(req: NextRequest) {
+  const { deny } = await requireUser();
+  if (deny) return deny;
   const supabase = db();
   const id = req.nextUrl.searchParams.get("id");
 
@@ -73,6 +76,8 @@ export async function GET(req: NextRequest) {
 // actually differs. Recording a no-op edit would bury the real changes, and
 // writing the update first would lose the old value if the insert then failed.
 export async function PATCH(req: NextRequest) {
+  const { viewer, deny } = await requireEditor();
+  if (deny) return deny;
   const { company_id, changes, rationale } = await req.json();
   if (!company_id || !changes) {
     return NextResponse.json({ error: "company_id and changes required" }, { status: 400 });
@@ -104,6 +109,7 @@ export async function PATCH(req: NextRequest) {
       new_value: value == null ? null : String(value),
       source: "analyst",
       rationale: rationale || null,
+      changed_by: viewer.id,
     });
   }
 
@@ -126,7 +132,7 @@ export async function PATCH(req: NextRequest) {
         company_id, field,
         old_value: before == null ? null : String(before),
         new_value: value == null ? null : String(value),
-        source: "analyst", rationale: rationale || null,
+        source: "analyst", rationale: rationale || null, changed_by: viewer.id,
       });
     }
   }
@@ -152,7 +158,7 @@ export async function PATCH(req: NextRequest) {
       await supabase.from("investor_field_history").insert([{
         company_id, field: "merged_into_id",
         old_value: await nameOf(before), new_value: await nameOf(after),
-        source: "analyst", rationale: rationale || null,
+        source: "analyst", rationale: rationale || null, changed_by: viewer.id,
       }]);
       const { error: mergeErr } = await supabase
         .from("companies").update({ merged_into_id: after }).eq("id", company_id);
@@ -177,6 +183,7 @@ export async function PATCH(req: NextRequest) {
       company_id, field: "last_audited",
       old_value: current.last_audited ? String(current.last_audited) : null,
       new_value: today, source: "analyst", rationale: rationale || null,
+      changed_by: viewer.id,
     });
   }
 

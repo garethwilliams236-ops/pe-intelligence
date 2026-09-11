@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import InvestorGrid from "./InvestorGrid";
 import RankPanel from "./RankPanel";
 import UpdatesPanel from "./UpdatesPanel";
@@ -17,10 +17,32 @@ const TABS: [string, string][] = [
 
 export default function Page() {
   const [tab, setTab] = useState("investors");
+  const [viewer, setViewer] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/me").then((r) => r.json()).then((d) => setViewer(d.viewer));
+  }, []);
 
   return (
     <main style={{ maxWidth: 1560, margin: "0 auto", padding: "28px 24px 80px" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 14px" }}>PE Intelligence</h1>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>PE Intelligence</h1>
+        {viewer && (
+          <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#a8a29e" }}>
+            {viewer.email}
+            {/* A viewer can read the Bible and not change it, and ought to know
+                that before they try and get a 403. */}
+            {viewer.role === "viewer" && " · read only"}
+            <form action="/auth/signout" method="post" style={{ display: "inline" }}>
+              <button type="submit" style={{ marginLeft: 10, border: "none",
+                background: "none", color: "#78716c", fontSize: 12.5,
+                cursor: "pointer", padding: 0 }}>
+                sign out
+              </button>
+            </form>
+          </span>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e7e5e4",
         marginBottom: 20 }}>

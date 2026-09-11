@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fundTypeLabel } from "@/lib/rank";
+import { ARDENT_FUND_TYPES, fundTypeLabel } from "@/lib/rank";
+import { CHEQUE_BANDS } from "@/lib/fields";
 
 type Proposal = {
   id: string; company_id: string; legal_name: string; website: string | null;
@@ -19,6 +20,15 @@ type Run = {
 const FIELD_LABEL: Record<string, string> = {
   address_line: "Address", postcode: "Postcode", city: "City", phone: "Switchboard",
   website: "Website", description: "Description", fund_type: "Fund type",
+};
+
+// Fields with a closed vocabulary amend through a dropdown, never a text box.
+// Typing a fund type by hand can produce a value the enum will refuse — the
+// write fails, and the queue keeps the proposal pending as though nothing
+// happened. The Bible only holds these nine, so only these nine are offerable.
+const OPTIONS: Record<string, [string, string][]> = {
+  fund_type: ARDENT_FUND_TYPES,
+  check_band: CHEQUE_BANDS,
 };
 
 function show(field: string, value: string | null) {
@@ -147,10 +157,23 @@ export default function UpdatesPanel() {
                     {show(p.field, p.current_value)}
                   </div>
                   {amending[p.id] !== undefined ? (
-                    <input autoFocus value={amending[p.id]}
-                      onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
-                      style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
-                        border: "1px solid #1c1917", borderRadius: 6, marginTop: 3 }} />
+                    OPTIONS[p.field] ? (
+                      <select autoFocus value={amending[p.id]}
+                        onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
+                        style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
+                          border: "1px solid #1c1917", borderRadius: 6, marginTop: 3,
+                          background: "#fff" }}>
+                        <option value="">— clear it —</option>
+                        {OPTIONS[p.field].map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input autoFocus value={amending[p.id]}
+                        onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
+                        style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
+                          border: "1px solid #1c1917", borderRadius: 6, marginTop: 3 }} />
+                    )
                   ) : (
                     <div style={{ fontSize: 14, marginTop: 2 }}>
                       {show(p.field, p.proposed_value)}

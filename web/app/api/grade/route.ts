@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireEditor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 // A grade supersedes rather than overwrites, so "why is this house an A" always
 // has an answer with a date against it.
 export async function POST(req: NextRequest) {
+  const { deny } = await requireEditor();
+  if (deny) return deny;
   const { company_id, grade, never_approach, rationale } = await req.json();
   if (!company_id) {
     return NextResponse.json({ error: "company_id required" }, { status: 400 });

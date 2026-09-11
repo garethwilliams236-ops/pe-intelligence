@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 // a fund and asking for that person. The lookup is by person AND company
 // because the address belongs to the role, not the name.
 export async function POST(req: NextRequest) {
+  const { deny } = await requireUser();
+  if (deny) return deny;
   const { company_id, person_id } = await req.json();
   if (!company_id || !person_id) {
     return NextResponse.json({ error: "company_id and person_id required" }, { status: 400 });

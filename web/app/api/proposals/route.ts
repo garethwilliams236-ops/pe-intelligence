@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireEditor, requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ const ON_INVESTOR = new Set(["fund_type", "ardent_sector", "check_band",
   "engagement_level", "priority", "key_investments"]);
 
 export async function GET() {
+  const { deny } = await requireUser();
+  if (deny) return deny;
   const supabase = db();
   const { data, error } = await supabase
     .from("v_pending_proposals")
@@ -41,6 +44,8 @@ export async function GET() {
 // Rejecting writes nothing to the record but is still recorded: a source that is
 // repeatedly wrong about a field is worth knowing about.
 export async function PATCH(req: NextRequest) {
+  const { viewer, deny } = await requireEditor();
+  if (deny) return deny;
   const { id, action, value, note } = await req.json();
   if (!id || !["accept", "amend", "reject"].includes(action)) {
     return NextResponse.json({ error: "id and a valid action required" }, { status: 400 });
@@ -70,6 +75,7 @@ export async function PATCH(req: NextRequest) {
       rationale: note || (action === "amend"
         ? `amended from proposed "${p.proposed_value}"`
         : `accepted from ${p.evidence_url || "site"}`),
+      changed_by: viewer.id,
     }]);
 
     const { error: writeErr } = await supabase
@@ -83,6 +89,7 @@ export async function PATCH(req: NextRequest) {
       status: action === "accept" ? "accepted" : action === "amend" ? "amended" : "rejected",
       final_value: action === "reject" ? null : finalValue,
       reviewed_at: new Date().toISOString(),
+      reviewed_by: viewer.id,
       note: note || null,
     })
     .eq("id", id);

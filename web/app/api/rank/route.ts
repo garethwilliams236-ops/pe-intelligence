@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { selectAll } from "@/lib/db";
+import { requireUser } from "@/lib/auth";
 import { concepts, excludedBy, keywords, regionFor, score, Investor, Mandate, Scored } from "@/lib/rank";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const { deny } = await requireUser();
+  if (deny) return deny;
   const body = await req.json();
 
   const mandate: Mandate = {
