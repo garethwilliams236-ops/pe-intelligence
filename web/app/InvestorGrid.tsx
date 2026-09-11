@@ -227,12 +227,52 @@ export default function InvestorGrid() {
           </button>
         )}
 
+        {/* Stats as one line rather than a column. They are reference, not
+            controls, and a 230px sidebar cost the table a fifth of the window
+            for seven short facts. The gap figures still filter — click one. */}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center",
+          gap: 4, fontSize: 12.5, fontStyle: "italic", color: "#78716c",
+          margin: "0 0 10px" }}>
+          <span style={{ fontStyle: "normal", fontWeight: 600, color: "#57534e",
+            marginRight: 4 }}>Bible stats</span>
+          {([
+            [null, `${data.total} funds`],
+            ["fund_type", `${data.total - data.with_fund_type} no fund type`],
+            ["cheque", `${data.total - data.with_cheque} no cheque size`],
+            ["geography", `${data.total - data.with_geography} no geography`],
+            ["contact", `${rows.filter((r) => !r.key_contact).length} no contact`],
+            [null, `${data.defunct_count} defunct`],
+            [null, `${data.duplicate_count} duplicate`],
+          ] as [string | null, string][]).map(([key, text], i) => (
+            <span key={text} style={{ display: "inline-flex", alignItems: "center" }}>
+              {i > 0 && <span style={{ color: "#d6d3d1", margin: "0 6px" }}>·</span>}
+              {key ? (
+                <span onClick={() => setOnlyGaps(onlyGaps === key ? null : key)}
+                  title="Click to show only these"
+                  style={{ cursor: "pointer",
+                    color: onlyGaps === key ? "#1c1917" : "#b45309",
+                    fontWeight: onlyGaps === key ? 600 : 400,
+                    textDecoration: "underline", textDecorationStyle: "dotted",
+                    textDecorationColor: "#e7e5e4", textUnderlineOffset: 3 }}>
+                  {text}
+                </span>
+              ) : <span>{text}</span>}
+            </span>
+          ))}
+          <label style={{ marginLeft: 12, display: "inline-flex", gap: 5,
+            alignItems: "center", cursor: "pointer", fontStyle: "normal" }}>
+            <input type="checkbox" checked={showHidden}
+              onChange={(e) => setShowHidden(e.target.checked)} />
+            show defunct and duplicate
+          </label>
+        </div>
+
         <p style={{ fontSize: 13, color: "#78716c", margin: "0 0 8px" }}>
           {filtered.length} shown
         </p>
 
         <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderRadius: 10,
-          overflow: "auto", maxHeight: "70vh" }}>
+          overflow: "auto", maxHeight: "74vh" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
@@ -301,66 +341,6 @@ export default function InvestorGrid() {
           </table>
         </div>
       </div>
-
-      {/* Stats rather than controls. These are the shape of the book — what is
-          classified and what is not — and they belong somewhere you can read at
-          a glance while working, not in the way of the filters. */}
-      {!openId && (
-        <div style={{ width: 230, flexShrink: 0, background: "#fff",
-          border: "1px solid #e7e5e4", borderRadius: 10, padding: 16,
-          position: "sticky", top: 16 }}>
-          <div style={{ fontSize: 12, color: "#57534e", fontWeight: 600,
-            marginBottom: 10 }}>
-            Bible Stats
-          </div>
-          {/* The gap lines filter. They read as statements rather than controls
-              because that is what they are most of the time — but "501 with no
-              fund type" is also the exact list you want when you sit down to
-              classify, and making you rebuild that filter by hand would be
-              perverse. */}
-          {([
-            [null, `${data.total} funds in the book`],
-            ["fund_type", `${data.total - data.with_fund_type} with no fund type`],
-            ["cheque", `${data.total - data.with_cheque} with no cheque size`],
-            ["geography", `${data.total - data.with_geography} with no geography`],
-            ["contact", `${rows.filter((r) => !r.key_contact).length} with no named contact`],
-            [null, `${data.defunct_count} marked defunct`],
-            [null, `${data.duplicate_count} marked duplicate`],
-          ] as [string | null, string][]).map(([key, text]) => {
-            if (!key) {
-              return (
-                <div key={text} style={{ fontSize: 12.5, fontStyle: "italic",
-                  color: "#78716c", padding: "3px 0" }}>
-                  {text}
-                </div>
-              );
-            }
-            const on = onlyGaps === key;
-            return (
-              <div key={text} onClick={() => setOnlyGaps(on ? null : key)}
-                title="Click to show only these"
-                style={{ fontSize: 12.5, fontStyle: "italic", padding: "3px 0",
-                  cursor: "pointer", color: on ? "#1c1917" : "#b45309",
-                  fontWeight: on ? 600 : 400,
-                  textDecoration: "underline",
-                  textDecorationStyle: "dotted",
-                  textDecorationColor: "#e7e5e4",
-                  textUnderlineOffset: 3 }}>
-                {text}
-              </div>
-            );
-          })}
-
-          <label style={{ display: "flex", gap: 7, alignItems: "flex-start",
-            marginTop: 12, paddingTop: 10, borderTop: "1px solid #f5f5f4",
-            fontSize: 12.5, color: "#57534e", cursor: "pointer" }}>
-            <input type="checkbox" checked={showHidden}
-              onChange={(e) => setShowHidden(e.target.checked)}
-              style={{ marginTop: 2 }} />
-            <span>Show the {data.hidden_count} defunct and duplicate</span>
-          </label>
-        </div>
-      )}
 
       {openId && (
         <RecordPanel id={openId} book={rows} onClose={() => setOpenId(null)} onSaved={load} />

@@ -26,7 +26,7 @@ export default function Page() {
   }, []);
 
   return (
-    <main style={{ maxWidth: 1560, margin: "0 auto", padding: "28px 24px 80px" }}>
+    <main style={{ maxWidth: 1800, margin: "0 auto", padding: "28px 24px 80px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>PE Intelligence</h1>
         {viewer && (
