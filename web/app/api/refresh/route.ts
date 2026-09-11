@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { extract, fetchSite, fundTypeHint } from "@/lib/scrape";
+import { extract, extractContacts, fetchSite, fundTypeHint, guessWebsite } from "@/lib/scrape";
 import { requireEditor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +25,29 @@ const PROPOSABLE = new Set([
   "fund_types",
 ]);
 
+// WHICH funds. "oldest" is the nightly rotation; the rest are the targeted runs
+// an analyst asks for when they sit down to fix one thing across the book.
+const SCOPES: Record<string, (q: any) => any> = {
+  oldest: (q) => q.not("website", "is", null),
+  no_contact: (q) => q.not("website", "is", null).is("key_contact", null),
+  no_address: (q) => q.not("website", "is", null).is("address_line", null),
+  no_fund_type: (q) => q.not("website", "is", null).eq("fund_types", "{}"),
+  // The one scope that does NOT require a website, because finding one is the
+  // whole job.
+  no_website: (q) => q.is("website", null),
+};
+
+// WHAT to look for. Narrowing the goal is not just tidiness: a contacts run
+// fetches the team and contact pages and skips the rest, so twenty funds fit in
+// the time budget instead of six.
+const GOALS: Record<string, { fields: string[]; paths: string[]; contacts: boolean }> = {
+  all:      { fields: [...PROPOSABLE], paths: ["", "/contact", "/contact-us", "/about", "/team", "/our-team"], contacts: true },
+  contacts: { fields: [], paths: ["/team", "/our-team", "/people", "/contact", "/contact-us", ""], contacts: true },
+  address:  { fields: ["address_line", "postcode", "city", "phone"], paths: ["/contact", "/contact-us", ""], contacts: false },
+  profile:  { fields: ["description", "fund_types"], paths: ["", "/about"], contacts: false },
+  website:  { fields: ["website"], paths: [""], contacts: false },
+};
+
 // Two callers, two proofs. Vercel's scheduler carries the bearer token and has
 // no session; a person pressing "Run now" has a session and no token. Either is
 // sufficient; neither is optional.
@@ -44,6 +67,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const trigger = body?.trigger === "manual" ? "manual" : "schedule";
   const size = Math.min(Number(body?.size) || BATCH, 50);
+  const scope = SCOPES[body?.scope] ? String(body.scope) : "oldest";
+  const goal = GOALS[body?.goal] ? String(body.goal) : "all";
+  const plan = GOALS[goal];
 
   const supabase = db();
 
@@ -55,11 +81,12 @@ export async function POST(req: NextRequest) {
   // row shape; a `"a, b" + "c"` expression is not a literal it can read, so it
   // gives up and types every row as GenericStringError — which compiles locally
   // under esbuild (types stripped) and fails the Vercel build at tsc.
-  const { data: queueRows, error: queueErr } = await supabase
+  let query = supabase
     .from("v_refresh_queue")
-    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_types")
-    .eq("hidden", false)
-    .not("website", "is", null)
+    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_types, key_contact")
+    .eq("hidden", false);
+  query = SCOPES[scope](query);
+  const { data: queueRows, error: queueErr } = await query
     .order("last_scraped_at", { ascending: true, nullsFirst: true })
     .order("legal_name")
     .limit(size);
@@ -78,7 +105,35 @@ export async function POST(req: NextRequest) {
     if (Date.now() - started > BUDGET_MS) { ranOut = true; break; }
     attempted++;
 
-    const { pages, error } = await fetchSite(inv.website as string);
+    // No website and a website-hunting run: guess one and stop there. There is
+    // nothing else to read until we know where to read it.
+    if (!inv.website) {
+      const guess = await guessWebsite(String(inv.legal_name));
+      await supabase.from("investors")
+        .update({ last_scraped_at: new Date().toISOString(),
+                  scrape_error: guess ? null : "no website found" })
+        .eq("company_id", inv.company_id);
+      if (guess) {
+        const { data: already } = await supabase
+          .from("investor_update_proposals").select("field")
+          .eq("company_id", inv.company_id).eq("status", "pending");
+        if (!(already || []).some((a: any) => a.field === "website")) {
+          await supabase.from("investor_update_proposals").insert([{
+            run_id: run.id, company_id: inv.company_id, field: "website",
+            current_value: null, proposed_value: guess.value,
+            confidence: guess.confidence, evidence_url: guess.url,
+            evidence_snippet: guess.snippet,
+          }]);
+          proposed++;
+        }
+        fetched++;
+      } else {
+        failed++;
+      }
+      continue;
+    }
+
+    const { pages, error } = await fetchSite(inv.website as string, 3, plan.paths);
     // Stamped whether or not it worked: one unreachable site must not sit at the
     // head of the queue blocking the other 1,284 forever.
     await supabase.from("investors")
@@ -92,8 +147,28 @@ export async function POST(req: NextRequest) {
     const hint = fundTypeHint(pages);
     if (hint) found.push(hint);
 
+    // Contacts are proposed as their own field rather than an investor column,
+    // because accepting one creates a person and a role rather than setting a
+    // value. One per run: a team page yields a dozen and a queue of a dozen per
+    // fund is unreviewable.
+    if (plan.contacts && !inv.key_contact) {
+      let host: string | undefined;
+      try { host = new URL(pages[0].url).hostname; } catch { /* ignore */ }
+      const best = extractContacts(pages, host)
+        .sort((a, b) => b.confidence - a.confidence)[0];
+      if (best) {
+        found.push({
+          field: "contact",
+          value: `${best.name || ""}|${best.email}`,
+          confidence: best.confidence,
+          url: best.url,
+          snippet: best.snippet,
+        });
+      }
+    }
+
     const rows = found
-      .filter((f) => PROPOSABLE.has(f.field))
+      .filter((f) => f.field === "contact" ? plan.contacts : plan.fields.includes(f.field))
       .filter((f) => {
         const current = (inv as any)[f.field];
         // Only differences are worth a human's attention. Whitespace and case
@@ -109,7 +184,8 @@ export async function POST(req: NextRequest) {
         run_id: run.id,
         company_id: inv.company_id,
         field: f.field,
-        current_value: Array.isArray((inv as any)[f.field])
+        current_value: f.field === "contact" ? null
+          : Array.isArray((inv as any)[f.field])
           ? ((inv as any)[f.field] as string[]).join(",") || null
           : (inv as any)[f.field] ?? null,
         proposed_value: f.value,
@@ -145,7 +221,7 @@ export async function POST(req: NextRequest) {
   }).eq("id", run.id);
 
   return NextResponse.json({
-    run_id: run.id, trigger, attempted, fetched, proposed, failed,
+    run_id: run.id, trigger, scope, goal, attempted, fetched, proposed, failed,
     stopped_early: ranOut,
     seconds: Math.round((Date.now() - started) / 1000),
   });

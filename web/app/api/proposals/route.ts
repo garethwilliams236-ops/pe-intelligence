@@ -83,7 +83,35 @@ export async function PATCH(req: NextRequest) {
         ])].filter(Boolean).join(",")
       : p.proposed_value;
 
-  if (action !== "reject") {
+  // A contact proposal is not a field update — accepting it creates a person
+  // and attaches them to the firm. Same review, different consequence, so it
+  // gets its own branch rather than being forced through the column writer.
+  if (action !== "reject" && p.field === "contact") {
+    const [rawName, email] = String(finalValue).split("|");
+    const name = (rawName || "").trim() || (email || "").split("@")[0];
+    const { data: person } = await supabase
+      .from("people").insert({ full_name: name, confidence: 0.6 })
+      .select("id").single();
+    if (person) {
+      const { data: taken } = await supabase
+        .from("person_roles").select("id")
+        .eq("company_id", p.company_id).eq("is_key_contact", true).maybeSingle();
+      await supabase.from("person_roles").insert({
+        person_id: person.id,
+        company_id: p.company_id,
+        seniority: "other",
+        email: (email || "").trim() || null,
+        is_key_contact: !taken,
+      });
+    }
+    await supabase.from("investor_field_history").insert([{
+      company_id: p.company_id, field: "contact",
+      old_value: null, new_value: finalValue,
+      source: "scrape_accepted",
+      rationale: note || `accepted from ${p.evidence_url || "site"}`,
+      changed_by: viewer.id,
+    }]);
+  } else if (action !== "reject") {
     const table = ON_INVESTOR.has(p.field) ? "investors" : "companies";
     const key = table === "investors" ? "company_id" : "id";
     const write = forColumn(p.field, finalValue);

@@ -21,6 +21,7 @@ type Run = {
 const FIELD_LABEL: Record<string, string> = {
   address_line: "Address", postcode: "Postcode", city: "City", phone: "Switchboard",
   website: "Website", description: "Description", fund_types: "Fund type",
+  contact: "Contact",
 };
 
 // Fields with a closed vocabulary amend through a dropdown, never a text box.
@@ -39,6 +40,12 @@ const MULTI = new Set(["fund_types"]);
 function show(field: string, value: string | null) {
   if (value == null || value === "") return "—";
   if (MULTI.has(field)) return fundTypesLabel(value.split(",").filter(Boolean));
+  // A contact is stored as "Name|email" because the proposals table holds one
+  // text column per field; it should not read that way on the page.
+  if (field === "contact") {
+    const [name, email] = value.split("|");
+    return name ? `${name} — ${email}` : email;
+  }
   return value;
 }
 
@@ -47,6 +54,8 @@ export default function UpdatesPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [amending, setAmending] = useState<Record<string, string>>({});
+  const [scope, setScope] = useState("oldest");
+  const [goal, setGoal] = useState("all");
 
   async function load() {
     setData(await (await fetch("/api/proposals")).json());
@@ -70,7 +79,7 @@ export default function UpdatesPanel() {
     setRunning(true);
     const res = await fetch("/api/refresh", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ trigger: "manual" }),
+      body: JSON.stringify({ trigger: "manual", scope, goal }),
     });
     const out = await res.json();
     setRunning(false);
@@ -111,6 +120,25 @@ export default function UpdatesPanel() {
           the Bible — accepting one writes it through with the same audit trail as
           your own edits, rejecting one records that the site was wrong.
         </p>
+        {/* Which funds, and what to look for. The nightly job runs "oldest /
+            everything"; these are for the afternoon you decide to fix one thing
+            across the whole book. */}
+        <select value={scope} onChange={(e) => setScope(e.target.value)}
+          style={{ ...btn, padding: "7px 9px" }}>
+          <option value="oldest">longest since checked</option>
+          <option value="no_contact">funds with no named contact</option>
+          <option value="no_address">funds with no address</option>
+          <option value="no_fund_type">funds with no fund type</option>
+          <option value="no_website">funds with no website</option>
+        </select>
+        <select value={goal} onChange={(e) => setGoal(e.target.value)}
+          style={{ ...btn, padding: "7px 9px" }}>
+          <option value="all">look for everything</option>
+          <option value="contacts">contacts only</option>
+          <option value="address">address and phone only</option>
+          <option value="profile">description and type only</option>
+          <option value="website">find a website</option>
+        </select>
         <button onClick={runNow} disabled={running} style={{
           ...btn, padding: "8px 14px", background: "#1c1917", color: "#fff",
           border: "none", fontSize: 13.5 }}>

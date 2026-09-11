@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ARDENT_FUND_TYPES, fundTypesLabel, sharesType } from "@/lib/rank";
-import { COMPANY_FIELDS, EDITABLE, FieldDef, GEOGRAPHIES, sameValue } from "@/lib/fields";
+import { CHEQUE_BANDS, COMPANY_FIELDS, EDITABLE, FieldDef, GEOGRAPHIES, sameValue } from "@/lib/fields";
 
 export type Row = {
   company_id: string; legal_name: string; country_code: string | null;
@@ -43,6 +43,29 @@ export function quantum(r: { check_band: string | null; cheque_min: number | nul
 
 const gap = { color: "#b45309", fontSize: 12 };
 
+// Ticket size filters on the NUMBER, not on the band label. 209 funds carry a
+// scraped range and no band at all; matching on the label would silently hide
+// every one of them from a ticket filter, which is the same class of bug as
+// filtering on HQ country instead of investment geography.
+const BAND_RANGE: Record<string, [number, number]> = {
+  "£0-5m": [0, 5e6],
+  "£5-20m": [5e6, 20e6],
+  "£20-60m": [20e6, 60e6],
+  "£60-200m": [60e6, 200e6],
+  "£200- £900m": [200e6, 900e6],
+};
+
+function overlapsBands(r: { cheque_min: number | null; cheque_max: number | null },
+                       bands: string[]): boolean {
+  if (r.cheque_min == null && r.cheque_max == null) return false;
+  const lo = Number(r.cheque_min ?? 0);
+  const hi = Number(r.cheque_max ?? lo);
+  return bands.some((b) => {
+    const range = BAND_RANGE[b];
+    return range && lo <= range[1] && hi >= range[0];
+  });
+}
+
 // A discreet way out to the fund's own site, for the times the only way to
 // settle a question is to look at it. Deliberately small: it appears on every
 // row and should read as an affordance, not a call to action.
@@ -68,6 +91,8 @@ export default function InvestorGrid() {
   const [data, setData] = useState<any>(null);
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [bandFilter, setBandFilter] = useState<string[]>([]);
+  const [ticket, setTicket] = useState("");
   const [onlyGaps, setOnlyGaps] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -93,13 +118,26 @@ export default function InvestorGrid() {
           || (wanted.length > 0 && sharesType(r.fund_types, wanted));
         if (!hit) return false;
       }
+      if (bandFilter.length && !overlapsBands(r, bandFilter)) return false;
+      // An exact figure is a different question from a band — "who can write
+      // £8m" rather than "who plays in the £5-20m bracket" — so it narrows
+      // alongside the bands rather than replacing them.
+      if (ticket) {
+        const want = Number(ticket.replace(/\D/g, ""));
+        if (want) {
+          if (r.cheque_min == null && r.cheque_max == null) return false;
+          const lo = Number(r.cheque_min ?? 0);
+          const hi = Number(r.cheque_max ?? lo);
+          if (want < lo || want > hi) return false;
+        }
+      }
       if (onlyGaps === "fund_type" && (r.fund_types || []).length) return false;
       if (onlyGaps === "cheque" && r.cheque_min != null) return false;
       if (onlyGaps === "geography" && (r.invest_geographies || []).length) return false;
       if (onlyGaps === "contact" && r.key_contact) return false;
       return true;
     });
-  }, [rows, q, typeFilter, onlyGaps]);
+  }, [rows, q, typeFilter, bandFilter, ticket, onlyGaps]);
 
   function toggleType(key: string) {
     setTypeFilter((p) => p.includes(key) ? p.filter((k) => k !== key) : [...p, key]);
@@ -110,6 +148,9 @@ export default function InvestorGrid() {
     border: "1px solid " + (on ? "#1c1917" : "#e7e5e4"),
     background: on ? "#1c1917" : "#fff", color: on ? "#fff" : "#44403c",
   });
+
+  const filterLabel = { fontSize: 12, color: "#78716c", width: 76,
+    display: "inline-block" as const };
 
   const th = { textAlign: "left" as const, fontWeight: 500, fontSize: 12, color: "#78716c",
     padding: "8px 10px", borderBottom: "1px solid #e7e5e4", position: "sticky" as const,
@@ -128,37 +169,17 @@ export default function InvestorGrid() {
           and cheque band are the two the ranking leans on hardest. Every change is kept.
         </p>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {([
-            ["fund_type", "no fund type", data.total - data.with_fund_type],
-            ["cheque", "no cheque size", data.total - data.with_cheque],
-            ["geography", "no geography", data.total - data.with_geography],
-            ["contact", "no named contact",
-              data.rows.filter((r: Row) => !r.key_contact).length],
-          ] as [string, string, number][]).map(([key, name, missing]) => (
-            <button key={key} onClick={() => setOnlyGaps(onlyGaps === key ? null : key)}
-              style={{ ...chip(onlyGaps === key), padding: "6px 12px" }}>
-              {missing} {name}
-            </button>
-          ))}
-          <span style={{ fontSize: 12.5, color: "#a8a29e", alignSelf: "center" }}>
-            of {data.total}
-          </span>
-
-          {/* Hidden rows are never deleted, so the count is always shown even
-              when the rows themselves are not. */}
-          <button onClick={() => setShowHidden(!showHidden)}
-            style={{ ...chip(showHidden), padding: "6px 12px", marginLeft: "auto" }}
-            title={`${data.defunct_count} defunct, ${data.duplicate_count} duplicates`}>
-            {showHidden ? "Hide" : "Show"} {data.hidden_count} defunct / duplicate
-          </button>
+        {/* One filter per line, in the order an analyst narrows: who is it,
+            what do they write, what do they back. */}
+        <div style={{ marginBottom: 10 }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name…"
+            style={{ padding: "8px 11px", border: "1px solid #d6d3d1", borderRadius: 6,
+              fontSize: 14, width: 320 }} />
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12,
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10,
           alignItems: "center" }}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name…"
-            style={{ padding: "7px 10px", border: "1px solid #d6d3d1", borderRadius: 6,
-              fontSize: 13.5, width: 220 }} />
+          <span style={{ ...filterLabel }}>Fund type</span>
           {ARDENT_FUND_TYPES.map(([key, name]) => (
             <button key={key} onClick={() => toggleType(key)} style={chip(typeFilter.includes(key))}>
               {name}
@@ -168,11 +189,43 @@ export default function InvestorGrid() {
             ...chip(typeFilter.includes(MISSING)), fontStyle: "italic" }}>
             unclassified
           </button>
-          {(typeFilter.length > 0 || q || onlyGaps) && (
-            <button onClick={() => { setTypeFilter([]); setQ(""); setOnlyGaps(null); }}
-              style={{ ...chip(false), color: "#a8a29e" }}>clear</button>
-          )}
         </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10,
+          alignItems: "center" }}>
+          <span style={{ ...filterLabel }}>Ticket size</span>
+          {CHEQUE_BANDS.map(([key, name]) => (
+            <button key={key} onClick={() => setBandFilter(
+              bandFilter.includes(key) ? bandFilter.filter((b) => b !== key)
+                                       : [...bandFilter, key])}
+              style={chip(bandFilter.includes(key))}>
+              {name}
+            </button>
+          ))}
+          <span style={{ fontSize: 12, color: "#a8a29e" }}>or exactly</span>
+          <input value={ticket ? Number(ticket.replace(/\D/g, "")).toLocaleString("en-GB") : ""}
+            onChange={(e) => setTicket(e.target.value.replace(/\D/g, ""))}
+            placeholder="£"
+            style={{ width: 120, padding: "5px 9px", border: "1px solid #d6d3d1",
+              borderRadius: 6, fontSize: 13 }} />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14,
+          alignItems: "center" }}>
+          <span style={{ ...filterLabel }}>Sector focus</span>
+          <span style={{ fontSize: 12.5, color: "#a8a29e", fontStyle: "italic" }}>
+            to be decided — the sector vocabulary needs settling before this can
+            filter on anything meaningful
+          </span>
+        </div>
+
+        {(typeFilter.length > 0 || bandFilter.length > 0 || q || ticket || onlyGaps) && (
+          <button onClick={() => { setTypeFilter([]); setBandFilter([]); setQ("");
+            setTicket(""); setOnlyGaps(null); }}
+            style={{ ...chip(false), color: "#a8a29e", marginBottom: 12 }}>
+            clear filters
+          </button>
+        )}
 
         <p style={{ fontSize: 13, color: "#78716c", margin: "0 0 8px" }}>
           {filtered.length} shown
@@ -248,6 +301,66 @@ export default function InvestorGrid() {
           </table>
         </div>
       </div>
+
+      {/* Stats rather than controls. These are the shape of the book — what is
+          classified and what is not — and they belong somewhere you can read at
+          a glance while working, not in the way of the filters. */}
+      {!openId && (
+        <div style={{ width: 230, flexShrink: 0, background: "#fff",
+          border: "1px solid #e7e5e4", borderRadius: 10, padding: 16,
+          position: "sticky", top: 16 }}>
+          <div style={{ fontSize: 12, color: "#57534e", fontWeight: 600,
+            marginBottom: 10 }}>
+            Bible Stats
+          </div>
+          {/* The gap lines filter. They read as statements rather than controls
+              because that is what they are most of the time — but "501 with no
+              fund type" is also the exact list you want when you sit down to
+              classify, and making you rebuild that filter by hand would be
+              perverse. */}
+          {([
+            [null, `${data.total} funds in the book`],
+            ["fund_type", `${data.total - data.with_fund_type} with no fund type`],
+            ["cheque", `${data.total - data.with_cheque} with no cheque size`],
+            ["geography", `${data.total - data.with_geography} with no geography`],
+            ["contact", `${rows.filter((r) => !r.key_contact).length} with no named contact`],
+            [null, `${data.defunct_count} marked defunct`],
+            [null, `${data.duplicate_count} marked duplicate`],
+          ] as [string | null, string][]).map(([key, text]) => {
+            if (!key) {
+              return (
+                <div key={text} style={{ fontSize: 12.5, fontStyle: "italic",
+                  color: "#78716c", padding: "3px 0" }}>
+                  {text}
+                </div>
+              );
+            }
+            const on = onlyGaps === key;
+            return (
+              <div key={text} onClick={() => setOnlyGaps(on ? null : key)}
+                title="Click to show only these"
+                style={{ fontSize: 12.5, fontStyle: "italic", padding: "3px 0",
+                  cursor: "pointer", color: on ? "#1c1917" : "#b45309",
+                  fontWeight: on ? 600 : 400,
+                  textDecoration: "underline",
+                  textDecorationStyle: "dotted",
+                  textDecorationColor: "#e7e5e4",
+                  textUnderlineOffset: 3 }}>
+                {text}
+              </div>
+            );
+          })}
+
+          <label style={{ display: "flex", gap: 7, alignItems: "flex-start",
+            marginTop: 12, paddingTop: 10, borderTop: "1px solid #f5f5f4",
+            fontSize: 12.5, color: "#57534e", cursor: "pointer" }}>
+            <input type="checkbox" checked={showHidden}
+              onChange={(e) => setShowHidden(e.target.checked)}
+              style={{ marginTop: 2 }} />
+            <span>Show the {data.hidden_count} defunct and duplicate</span>
+          </label>
+        </div>
+      )}
 
       {openId && (
         <RecordPanel id={openId} book={rows} onClose={() => setOpenId(null)} onSaved={load} />

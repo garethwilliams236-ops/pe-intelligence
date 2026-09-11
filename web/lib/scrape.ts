@@ -248,7 +248,7 @@ export function fundTypeHint(pages: { url: string; html: string }[]): Extracted 
 // the whole run has to finish inside one serverless invocation.
 export const PATHS = ["", "/contact", "/contact-us", "/about", "/team", "/our-team"];
 
-export async function fetchSite(website: string, maxPages = 3) {
+export async function fetchSite(website: string, maxPages = 3, paths: string[] = PATHS) {
   let base: URL;
   try {
     base = new URL(website.startsWith("http") ? website : `https://${website}`);
@@ -257,7 +257,7 @@ export async function fetchSite(website: string, maxPages = 3) {
   }
   const pages: { url: string; html: string }[] = [];
   let error: string | null = null;
-  for (const path of PATHS) {
+  for (const path of paths) {
     if (pages.length >= maxPages) break;
     try {
       const page = await getPage(new URL(path || "/", base).toString());
@@ -269,4 +269,114 @@ export async function fetchSite(website: string, maxPages = 3) {
   }
   if (!pages.length && !error) error = "nothing fetched";
   return { pages, error: pages.length ? null : error };
+}
+
+
+// ---------------------------------------------------------------------------
+// Contacts
+// ---------------------------------------------------------------------------
+
+// Harvested from mailto: links, and only from mailto: links.
+//
+// A person put that address on the page for people to use, which makes it the
+// one contact signal on a sponsor site that is not a guess. Scraping names and
+// titles out of team-page markup was the alternative and it is a mess — every
+// firm lays it out differently, and the failure mode is a proposal that pairs
+// the right name with the wrong job, which is worse than no proposal at all.
+const GENERIC = /^(info|hello|enquiries|enquiry|contact|admin|office|mail|team|press|media|careers|jobs|recruitment|general|reception)@/i;
+
+function nameFromAddress(email: string): string | null {
+  const local = email.split("@")[0];
+  if (!local.includes(".") && !local.includes("_")) return null;
+  const parts = local.split(/[._]/).filter((x) => x.length > 1);
+  if (parts.length < 2) return null;
+  return parts
+    .map((x) => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase())
+    .join(" ");
+}
+
+export type ContactCandidate = {
+  email: string;
+  name: string | null;
+  url: string;
+  snippet: string;
+  confidence: number;
+};
+
+export function extractContacts(
+  pages: { url: string; html: string }[], firmDomain?: string
+): ContactCandidate[] {
+  const found = new Map<string, ContactCandidate>();
+
+  for (const page of pages) {
+    const re = /<a[^>]+href=["']mailto:([^"'?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(page.html))) {
+      const email = decodeURIComponent(m[1]).trim().toLowerCase();
+      if (!email.includes("@") || found.has(email)) continue;
+
+      const generic = GENERIC.test(email);
+      const anchor = strip(m[2]);
+      const looksLikeName = /^[A-Z][a-z'-]+ [A-Z][a-z'-]+/.test(anchor)
+        && !anchor.includes("@") && anchor.length < 60;
+
+      const name = looksLikeName ? anchor : generic ? null : nameFromAddress(email);
+
+      found.set(email, {
+        email,
+        name,
+        url: page.url,
+        snippet: anchor.slice(0, 120) || email,
+        // A name from the page beats a name inferred from the address, which
+        // beats no name — and the confidence should say which happened.
+        confidence: looksLikeName ? 0.8 : name ? 0.55 : generic ? 0.5 : 0.45,
+      });
+    }
+  }
+
+  // An address at another domain entirely is usually a PR agency or a portfolio
+  // company, not this firm.
+  const list = [...found.values()];
+  if (!firmDomain) return list;
+  const bare = firmDomain.replace(/^www\./, "");
+  return list.filter((c) => c.email.endsWith(`@${bare}`)
+    || c.email.endsWith(`.${bare}`));
+}
+
+// ---------------------------------------------------------------------------
+// Finding a website at all
+// ---------------------------------------------------------------------------
+
+// For funds with no URL on file. This is a GUESS and is treated as one: a
+// candidate domain only counts if the page that answers actually mentions the
+// firm by name, and it still arrives as a proposal rather than a fact. Without
+// a search API this is the only route from a name to a site, and being explicit
+// about the method is what makes it acceptable.
+export async function guessWebsite(name: string): Promise<Extracted | null> {
+  const slug = name.toLowerCase()
+    .replace(/\b(llp|ltd|limited|plc|lp|partners|capital|group|management)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+  if (slug.length < 4) return null;
+
+  const words = name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+  for (const tld of [".com", ".co.uk"]) {
+    const url = `https://${slug}${tld}`;
+    try {
+      const page = await getPage(url);
+      if (!page) continue;
+      const text = strip(page.html).toLowerCase();
+      // The page has to know who it is. Parked domains answer 200 with content
+      // that mentions everything except the firm.
+      const mentions = words.filter((w) => text.includes(w)).length;
+      if (mentions < Math.min(2, words.length)) continue;
+      return {
+        field: "website", value: `${slug}${tld}`, confidence: 0.4,
+        url: page.url,
+        snippet: `guessed from the name; the page mentions ${words.slice(0, 2).join(" ")}`,
+      };
+    } catch {
+      /* a domain that does not resolve is the expected case */
+    }
+  }
+  return null;
 }
