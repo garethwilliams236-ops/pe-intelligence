@@ -21,6 +21,24 @@ function cheque(r: Result) {
   return `${m(r.cheque_min)}–${m(r.cheque_max)}`;
 }
 
+// Money reads as digits in the box and as a magnitude underneath it. Both,
+// because the failure this prevents is a wrong number of zeros — 800000000 and
+// 80000000 look identical at a glance, and the second one silently ranks a
+// different market.
+function grouped(raw: string): string {
+  const digits = (raw || "").replace(/\D/g, "");
+  return digits ? Number(digits).toLocaleString("en-GB") : "";
+}
+
+function magnitude(raw: string): string {
+  const n = Number((raw || "").replace(/\D/g, ""));
+  if (!n) return "";
+  if (n >= 1e9) return `£${(n / 1e9).toFixed(n % 1e9 ? 2 : 0)}bn`;
+  if (n >= 1e6) return `£${(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}m`;
+  if (n >= 1e3) return `£${(n / 1e3).toFixed(0)}k`;
+  return `£${n}`;
+}
+
 const SIGNAL_LABEL: Record<string, string> = {
   sector_fit: "Sector", size_fit: "Cheque", deal_type_fit: "Fund type",
   geography_fit: "Geography", thesis_similarity: "Portfolio",
@@ -114,8 +132,16 @@ export default function RankPanel() {
           <input style={field} value={form.country_code}
             onChange={(e) => setForm({ ...form, country_code: e.target.value.toUpperCase() })} /></div>
         <div><label style={label}>Size / raise (£)</label>
-          <input style={field} value={form.expected_ev_gbp}
-            onChange={(e) => setForm({ ...form, expected_ev_gbp: e.target.value })} /></div>
+          <input style={field} inputMode="numeric" value={grouped(form.expected_ev_gbp)}
+            onChange={(e) => setForm({
+              ...form,
+              // Store digits, show groups. Keeping the commas in state would
+              // send "8,000,000" to the API, where Number() makes it NaN.
+              expected_ev_gbp: e.target.value.replace(/\D/g, ""),
+            })} />
+          <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 3, minHeight: 14 }}>
+            {magnitude(form.expected_ev_gbp)}
+          </div></div>
 
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={label}>
