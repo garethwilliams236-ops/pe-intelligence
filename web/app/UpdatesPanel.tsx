@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ARDENT_FUND_TYPES, fundTypeLabel } from "@/lib/rank";
 import { CHEQUE_BANDS } from "@/lib/fields";
+import { WebLink } from "./InvestorGrid";
 
 type Proposal = {
   id: string; company_id: string; legal_name: string; website: string | null;
@@ -135,6 +136,9 @@ export default function UpdatesPanel() {
             <a href={`/investor/${companyId}`} style={{ fontSize: 12.5, color: "#78716c" }}>
               fund page →
             </a>
+            {/* The scraper read this site — being able to look at it yourself is
+                the difference between reviewing a proposal and trusting one. */}
+            <WebLink url={items[0].website} />
             <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#a8a29e" }}>
               {items.length} proposed
             </span>

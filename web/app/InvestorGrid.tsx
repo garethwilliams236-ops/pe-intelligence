@@ -43,6 +43,27 @@ export function quantum(r: { check_band: string | null; cheque_min: number | nul
 
 const gap = { color: "#b45309", fontSize: 12 };
 
+// A discreet way out to the fund's own site, for the times the only way to
+// settle a question is to look at it. Deliberately small: it appears on every
+// row and should read as an affordance, not a call to action.
+//
+// stopPropagation matters — in the grid this sits inside a row whose click
+// opens the record panel, and without it you would get both.
+export function WebLink({ url, label = "web" }: { url: string | null; label?: string }) {
+  if (!url) return null;
+  const href = url.startsWith("http") ? url : `https://${url}`;
+  return (
+    <a href={href} target="_blank" rel="noreferrer noopener"
+      onClick={(e) => e.stopPropagation()}
+      title={href}
+      style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 4, cursor: "pointer",
+        border: "1px solid #e7e5e4", color: "#78716c", textDecoration: "none",
+        background: "#fff", whiteSpace: "nowrap" }}>
+      {label}
+    </a>
+  );
+}
+
 export default function InvestorGrid() {
   const [data, setData] = useState<any>(null);
   const [q, setQ] = useState("");
@@ -170,7 +191,8 @@ export default function InvestorGrid() {
                     background: openId === r.company_id ? "#f5f5f4" : "#fff",
                     opacity: r.hidden ? 0.55 : 1 }}>
                   <td style={td}>
-                    {r.legal_name}
+                    {r.legal_name}{" "}
+                    <WebLink url={r.website} />
                     {r.status === "defunct" && (
                       <span style={{ marginLeft: 6, fontSize: 11, color: "#b91c1c" }}>defunct</span>
                     )}
@@ -315,9 +337,12 @@ function RecordPanel({ id, book, onClose, onSaved }:
         <button onClick={onClose} style={{ border: "none",
           background: "none", cursor: "pointer", color: "#a8a29e", fontSize: 18 }}>×</button>
       </div>
-      <a href={`/investor/${id}`} style={{ fontSize: 12.5, color: "#1c1917" }}>
-        Open as its own page →
-      </a>
+      <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <a href={`/investor/${id}`} style={{ fontSize: 12.5, color: "#1c1917" }}>
+          Open as its own page →
+        </a>
+        <WebLink url={record.website} />
+      </span>
 
       {record.hidden && (
         <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6,

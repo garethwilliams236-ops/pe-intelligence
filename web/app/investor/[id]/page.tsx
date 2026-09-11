@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fundTypeLabel } from "@/lib/rank";
-import { ContactCard, TeamList, TeamMember, quantum } from "../../InvestorGrid";
+import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
 
 // The full record. The skyscraper in the book is for a quick correction; this is
 // where the whole team lives, and where the provenance of every field is
@@ -42,7 +42,11 @@ export default function FundPage({ params }: { params: { id: string } }) {
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px 80px" }}>
       <a href="/" style={{ fontSize: 13, color: "#78716c" }}>← Investor Bible</a>
-      <h1 style={{ fontSize: 24, fontWeight: 600, margin: "10px 0 4px" }}>{r.legal_name}</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 600, margin: "10px 0 4px",
+        display: "flex", alignItems: "center", gap: 10 }}>
+        {r.legal_name}
+        <WebLink url={r.website} />
+      </h1>
 
       {r.hidden && (
         <div style={{ padding: "10px 12px", borderRadius: 8, background: "#fef2f2",
