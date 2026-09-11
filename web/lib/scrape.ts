@@ -353,29 +353,51 @@ export function extractContacts(
 // a search API this is the only route from a name to a site, and being explicit
 // about the method is what makes it acceptable.
 export async function guessWebsite(name: string): Promise<Extracted | null> {
-  const slug = name.toLowerCase()
-    .replace(/\b(llp|ltd|limited|plc|lp|partners|capital|group|management)\b/g, "")
-    .replace(/[^a-z0-9]+/g, "");
-  if (slug.length < 4) return null;
+  const words = name.toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return null;
 
-  const words = name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-  for (const tld of [".com", ".co.uk"]) {
-    const url = `https://${slug}${tld}`;
-    try {
-      const page = await getPage(url);
-      if (!page) continue;
-      const text = strip(page.html).toLowerCase();
-      // The page has to know who it is. Parked domains answer 200 with content
-      // that mentions everything except the firm.
-      const mentions = words.filter((w) => text.includes(w)).length;
-      if (mentions < Math.min(2, words.length)) continue;
-      return {
-        field: "website", value: `${slug}${tld}`, confidence: 0.4,
-        url: page.url,
-        snippet: `guessed from the name; the page mentions ${words.slice(0, 2).join(" ")}`,
-      };
-    } catch {
-      /* a domain that does not resolve is the expected case */
+  const GENERIC_WORD = /^(llp|ltd|limited|plc|lp|the|and)$/;
+  const kept = words.filter((w) => !GENERIC_WORD.test(w));
+  const core = kept.filter((w) =>
+    !/^(partners|capital|group|management|investments|ventures|equity|advisors|advisers)$/.test(w));
+
+  // Several spellings, because firms are inconsistent: Foresight Group is at
+  // foresightgroup, Beringea is at beringea, Bain Capital is at baincapital.
+  // Dropping "capital" is right for one and wrong for another, so try both.
+  const slugs = [...new Set([
+    kept.join(""),
+    core.join(""),
+    kept.join("-"),
+    core.length > 1 ? core[0] : "",
+  ].filter((x) => x.length >= 4))];
+
+  const tlds = [".com", ".co.uk", ".uk"];
+  const tried: string[] = [];
+
+  for (const slug of slugs) {
+    for (const tld of tlds) {
+      const host = `${slug}${tld}`;
+      tried.push(host);
+      try {
+        const page = await getPage(`https://${host}`);
+        if (!page) continue;
+        const text = strip(page.html).toLowerCase();
+        // The page has to know who it is. Parked domains and squatters answer
+        // 200 with content mentioning everything except the firm.
+        const distinctive = core.filter((w) => w.length > 3);
+        const need = distinctive.length ? 1 : 0;
+        const hits = distinctive.filter((w) => text.includes(w)).length;
+        if (hits < need) continue;
+        return {
+          field: "website", value: host, confidence: 0.4, url: page.url,
+          snippet: `guessed from the name; the page mentions ${distinctive.slice(0, 2).join(" ")}`,
+        };
+      } catch {
+        /* a domain that does not resolve is the expected case */
+      }
     }
   }
   return null;
