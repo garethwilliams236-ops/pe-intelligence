@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fundTypeLabel } from "@/lib/rank";
+import { fundTypesLabel } from "@/lib/rank";
 import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
 
 // The full record. The skyscraper in the book is for a quick correction; this is
@@ -27,7 +27,7 @@ export default function FundPage({ params }: { params: { id: string } }) {
   const dd = { fontSize: 14, marginBottom: 12 };
 
   const facts: [string, any][] = [
-    ["Fund type", r.fund_type ? fundTypeLabel(r.fund_type) : null],
+    ["Fund type", fundTypesLabel(r.fund_types) || null],
     ["Cheque", quantum(r)],
     ["Invests in", (r.invest_geographies || []).join(" / ") || null],
     ["Sector", r.ardent_sector],

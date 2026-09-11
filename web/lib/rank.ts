@@ -40,7 +40,7 @@ export type Investor = {
   company_id: string;
   legal_name: string;
   country_code: string | null;
-  fund_type: string | null;
+  fund_types: string[];
   invest_geographies: string[];
   ardent_sector: string | null;
   check_band: string | null;
@@ -85,6 +85,23 @@ export const ARDENT_FUND_TYPES: [string, string][] = [
 export function fundTypeLabel(key: string | null): string {
   if (!key) return "";
   return ARDENT_FUND_TYPES.find(([k]) => k === key)?.[1] || key.replace(/_/g, " ");
+}
+
+/** "LBO, Growth" for a set of keys, in the sheet's own order rather than the
+ *  order they happen to be stored in — so the same fund reads the same way
+ *  everywhere. */
+export function fundTypesLabel(keys: string[] | null | undefined): string {
+  if (!keys || !keys.length) return "";
+  const order = ARDENT_FUND_TYPES.map(([k]) => k);
+  return [...keys].sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map(fundTypeLabel).join(", ");
+}
+
+/** A fund matches a type filter if ANY of its types is wanted. A house that
+ *  does both LBO and growth is an LBO house; excluding it for also being
+ *  something else is the bug this replaces. */
+export function sharesType(theirs: string[] | null | undefined, wanted: string[]): boolean {
+  return (theirs || []).some((t) => wanted.includes(t));
 }
 
 // Deal type is scored only when the analyst has named the fund types they want.
@@ -185,7 +202,8 @@ export function excludedBy(m: Mandate, inv: Investor, want: Set<string>): string
   if (hard.has("fund_type") && (m.fund_types || []).length) {
     // Known failure only, as everywhere else: ~200 investors carry no fund type
     // on the sheet and are kept rather than hidden by a gap in our own record.
-    if (inv.fund_type && !m.fund_types.includes(inv.fund_type)) {
+    const theirs = inv.fund_types || [];
+    if (theirs.length && !sharesType(theirs, m.fund_types)) {
       return `not ${m.fund_types.map(fundTypeLabel).join("/")}`;
     }
   }
@@ -235,9 +253,10 @@ export function score(
   }
 
   if ((m.fund_types || []).length) {
-    stated.deal_type_fit = inv.fund_type && m.fund_types.includes(inv.fund_type) ? 1 : 0;
-    if (stated.deal_type_fit === 1) {
-      reasons.deal_type_fit = `${fundTypeLabel(inv.fund_type)} on the Ardent list`;
+    const matched = (inv.fund_types || []).filter((t) => m.fund_types.includes(t));
+    stated.deal_type_fit = matched.length ? 1 : 0;
+    if (matched.length) {
+      reasons.deal_type_fit = `${fundTypesLabel(matched)} on the Ardent list`;
     }
   }
 

@@ -235,7 +235,7 @@ export function fundTypeHint(pages: { url: string; html: string }[]): Extracted 
     for (const [re, value] of TYPE_HINTS) {
       const hit = text.match(re);
       if (hit) {
-        return { field: "fund_type", value, confidence: 0.35, url: page.url,
+        return { field: "fund_types", value, confidence: 0.35, url: page.url,
                  snippet: snippetAround(text, hit[0]) };
       }
     }

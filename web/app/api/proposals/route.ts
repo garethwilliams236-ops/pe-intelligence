@@ -7,8 +7,18 @@ export const dynamic = "force-dynamic";
 // Which table a field lives on. fund_type is the only proposable field that
 // hangs off the investor rather than the company, and getting this wrong writes
 // silently to nothing, so it is stated once here rather than inferred.
-const ON_INVESTOR = new Set(["fund_type", "ardent_sector", "check_band",
+const ON_INVESTOR = new Set(["fund_types", "ardent_sector", "check_band",
   "engagement_level", "priority", "key_investments"]);
+
+// Array columns cannot take the proposal's text value as-is. Proposals store a
+// comma-separated list because the table holds one text column for every field;
+// this is where it becomes a Postgres array again.
+const ARRAY_FIELDS = new Set(["fund_types", "invest_geographies"]);
+
+function forColumn(field: string, value: string | null): unknown {
+  if (!ARRAY_FIELDS.has(field)) return value === "" ? null : value;
+  return (value || "").split(",").map((v) => v.trim()).filter(Boolean);
+}
 
 export async function GET() {
   const { deny } = await requireUser();
@@ -59,12 +69,24 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "already reviewed" }, { status: 409 });
   }
 
-  const finalValue = action === "amend" ? (value ?? "") : p.proposed_value;
+  // Accepting a set-valued proposal ADDS to what is there. The scraper reads one
+  // thing off a homepage and proposes it; a fund already marked LBO that turns
+  // out to also be a growth investor should end up as both, not silently lose
+  // the classification an analyst made. Amend replaces, because an amend is the
+  // analyst stating the whole set deliberately.
+  const finalValue = action === "amend"
+    ? (value ?? "")
+    : ARRAY_FIELDS.has(p.field)
+      ? [...new Set([
+          ...String(p.current_value || "").split(",").map((v: string) => v.trim()),
+          ...String(p.proposed_value || "").split(",").map((v: string) => v.trim()),
+        ])].filter(Boolean).join(",")
+      : p.proposed_value;
 
   if (action !== "reject") {
     const table = ON_INVESTOR.has(p.field) ? "investors" : "companies";
     const key = table === "investors" ? "company_id" : "id";
-    const write = finalValue === "" ? null : finalValue;
+    const write = forColumn(p.field, finalValue);
 
     await supabase.from("investor_field_history").insert([{
       company_id: p.company_id,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import InvestorGrid from "./InvestorGrid";
 import RankPanel from "./RankPanel";
 import UpdatesPanel from "./UpdatesPanel";
+import AddFundPanel from "./AddFundPanel";
 
 // Three jobs. The Bible is the record; Updates is what a robot proposes adding
 // to it and is the only way anything automated gets in; Rank is where the record
@@ -12,6 +13,7 @@ import UpdatesPanel from "./UpdatesPanel";
 const TABS: [string, string][] = [
   ["investors", "Investor Bible"],
   ["updates", "Updates"],
+  ["add", "Add a fund"],
   ["rank", "Rank a mandate"],
 ];
 
@@ -59,6 +61,7 @@ export default function Page() {
 
       {tab === "investors" ? <InvestorGrid />
         : tab === "updates" ? <UpdatesPanel />
+        : tab === "add" ? <AddFundPanel />
         : <RankPanel />}
     </main>
   );

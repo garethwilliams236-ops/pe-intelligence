@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { ARDENT_FUND_TYPES, fundTypeLabel } from "@/lib/rank";
+import { ARDENT_FUND_TYPES, fundTypesLabel } from "@/lib/rank";
 
 type Result = {
   company_id: string; legal_name: string; country_code: string | null;
-  fund_type: string | null; invest_geographies: string[]; check_band: string | null;
+  fund_types: string[]; invest_geographies: string[]; check_band: string | null;
   cheque_min: number | null; cheque_max: number | null; cheque_source: string | null;
   stated: number; revealed: number | null; holdings: number;
   grade: string | null; reasons: Record<string, string>;
@@ -98,7 +98,7 @@ export default function RankPanel() {
     const head = ["Rank", "Investor", "Fund type", "Geographies", "Cheque",
       "Stated fit", "Evidence", "Holdings", "Grade", "Why"];
     const body = rows.map((r, i) => [
-      i + 1, r.legal_name, fundTypeLabel(r.fund_type),
+      i + 1, r.legal_name, fundTypesLabel(r.fund_types),
       (r.invest_geographies || []).join("/"), cheque(r), r.stated,
       r.revealed ?? "", r.holdings, r.grade || "",
       Object.entries(r.reasons).map(([k, v]) => `${SIGNAL_LABEL[k] || k}: ${v}`).join(" | "),
@@ -233,9 +233,9 @@ export default function RankPanel() {
                 <span style={{ color: "#a8a29e", fontSize: 13, width: 22 }}>{i + 1}</span>
                 <strong style={{ fontSize: 15 }}>{r.legal_name}</strong>
                 <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4,
-                  background: r.fund_type ? "#f5f5f4" : "#fffbeb",
-                  color: r.fund_type ? "#57534e" : "#b45309" }}>
-                  {r.fund_type ? fundTypeLabel(r.fund_type) : "fund type?"}
+                  background: (r.fund_types || []).length ? "#f5f5f4" : "#fffbeb",
+                  color: (r.fund_types || []).length ? "#57534e" : "#b45309" }}>
+                  {fundTypesLabel(r.fund_types) || "fund type?"}
                 </span>
                 <span style={{ fontSize: 11, color: (r.invest_geographies || []).length ? "#a8a29e" : "#b45309" }}>
                   {(r.invest_geographies || []).length

@@ -34,8 +34,8 @@ export const GEOGRAPHIES: [string, string][] = [
 // carry the two hard filters an analyst actually reaches for, so they come
 // first and everything else is secondary.
 export const EDITABLE: FieldDef[] = [
-  { key: "fund_type", label: "Fund type", editor: "select", options: ARDENT_FUND_TYPES,
-    hint: "Authoritative. Overrides anything inferred from strategy tags." },
+  { key: "fund_types", label: "Fund type", editor: "chips", options: ARDENT_FUND_TYPES,
+    hint: "One or more. Authoritative — overrides anything inferred from tags." },
   { key: "check_band", label: "Cheque band", editor: "select", options: CHEQUE_BANDS,
     hint: "Overrides the scraped numeric range wherever the two disagree." },
   { key: "invest_geographies", label: "Invests in", editor: "chips", options: GEOGRAPHIES,

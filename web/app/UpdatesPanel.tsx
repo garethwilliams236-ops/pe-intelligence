@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ARDENT_FUND_TYPES, fundTypeLabel } from "@/lib/rank";
+import { ARDENT_FUND_TYPES, fundTypesLabel } from "@/lib/rank";
 import { CHEQUE_BANDS } from "@/lib/fields";
 import { WebLink } from "./InvestorGrid";
 
@@ -20,7 +20,7 @@ type Run = {
 
 const FIELD_LABEL: Record<string, string> = {
   address_line: "Address", postcode: "Postcode", city: "City", phone: "Switchboard",
-  website: "Website", description: "Description", fund_type: "Fund type",
+  website: "Website", description: "Description", fund_types: "Fund type",
 };
 
 // Fields with a closed vocabulary amend through a dropdown, never a text box.
@@ -28,13 +28,18 @@ const FIELD_LABEL: Record<string, string> = {
 // write fails, and the queue keeps the proposal pending as though nothing
 // happened. The Bible only holds these nine, so only these nine are offerable.
 const OPTIONS: Record<string, [string, string][]> = {
-  fund_type: ARDENT_FUND_TYPES,
+  fund_types: ARDENT_FUND_TYPES,
   check_band: CHEQUE_BANDS,
 };
 
+// Set-valued fields amend by toggling, not by picking one. A fund can be an LBO
+// house and a growth investor, and the scraper only ever proposes one of them.
+const MULTI = new Set(["fund_types"]);
+
 function show(field: string, value: string | null) {
   if (value == null || value === "") return "—";
-  return field === "fund_type" ? fundTypeLabel(value) : value;
+  if (MULTI.has(field)) return fundTypesLabel(value.split(",").filter(Boolean));
+  return value;
 }
 
 export default function UpdatesPanel() {
@@ -161,7 +166,28 @@ export default function UpdatesPanel() {
                     {show(p.field, p.current_value)}
                   </div>
                   {amending[p.id] !== undefined ? (
-                    OPTIONS[p.field] ? (
+                    MULTI.has(p.field) ? (
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
+                        {(OPTIONS[p.field] || []).map(([v, l]) => {
+                          const chosen = amending[p.id].split(",").filter(Boolean);
+                          const on = chosen.includes(v);
+                          return (
+                            <button key={v} onClick={() => setAmending({
+                              ...amending,
+                              [p.id]: (on ? chosen.filter((c) => c !== v) : [...chosen, v])
+                                .join(","),
+                            })} style={{
+                              padding: "4px 9px", borderRadius: 999, fontSize: 12,
+                              cursor: "pointer",
+                              border: "1px solid " + (on ? "#1c1917" : "#e7e5e4"),
+                              background: on ? "#1c1917" : "#fff",
+                              color: on ? "#fff" : "#44403c" }}>
+                              {l}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : OPTIONS[p.field] ? (
                       <select autoFocus value={amending[p.id]}
                         onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
                         style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
@@ -215,7 +241,14 @@ export default function UpdatesPanel() {
                       </button>
                       <button style={btn} disabled={busy === p.id}
                         onClick={() => setAmending({
-                          ...amending, [p.id]: p.proposed_value || "" })}>
+                          ...amending,
+                          [p.id]: MULTI.has(p.field)
+                            ? [...new Set([
+                                ...(p.current_value || "").split(",").filter(Boolean),
+                                ...(p.proposed_value || "").split(",").filter(Boolean),
+                              ])].join(",")
+                            : p.proposed_value || "",
+                        })}>
                         Amend
                       </button>
                       <button style={{ ...btn, color: "#b91c1c" }} disabled={busy === p.id}

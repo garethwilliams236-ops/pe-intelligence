@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ARDENT_FUND_TYPES, fundTypeLabel } from "@/lib/rank";
+import { ARDENT_FUND_TYPES, fundTypesLabel, sharesType } from "@/lib/rank";
 import { COMPANY_FIELDS, EDITABLE, FieldDef, GEOGRAPHIES, sameValue } from "@/lib/fields";
 
 export type Row = {
   company_id: string; legal_name: string; country_code: string | null;
-  fund_type: string | null; invest_geographies: string[]; ardent_sector: string | null;
+  fund_types: string[]; invest_geographies: string[]; ardent_sector: string | null;
   check_band: string | null; cheque_min: number | null; cheque_max: number | null;
   cheque_source: string | null; engagement_level: string | null;
   quality_score: number | null; priority: string | null; last_audited: string | null;
@@ -84,8 +84,16 @@ export default function InvestorGrid() {
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (needle && !r.legal_name.toLowerCase().includes(needle)) return false;
-      if (typeFilter.length && !typeFilter.includes(r.fund_type || MISSING)) return false;
-      if (onlyGaps === "fund_type" && r.fund_type) return false;
+      if (typeFilter.length) {
+        // Overlap, not equality — a fund that is both LBO and growth belongs in
+        // an LBO filter. MISSING is its own selectable bucket for finding gaps.
+        const untyped = !(r.fund_types || []).length;
+        const wanted = typeFilter.filter((t) => t !== MISSING);
+        const hit = (untyped && typeFilter.includes(MISSING))
+          || (wanted.length > 0 && sharesType(r.fund_types, wanted));
+        if (!hit) return false;
+      }
+      if (onlyGaps === "fund_type" && (r.fund_types || []).length) return false;
       if (onlyGaps === "cheque" && r.cheque_min != null) return false;
       if (onlyGaps === "geography" && (r.invest_geographies || []).length) return false;
       if (onlyGaps === "contact" && r.key_contact) return false;
@@ -208,7 +216,8 @@ export default function InvestorGrid() {
                     )}
                   </td>
                   <td style={td}>
-                    {r.fund_type ? fundTypeLabel(r.fund_type) : <span style={gap}>—</span>}
+                    {(r.fund_types || []).length
+                      ? fundTypesLabel(r.fund_types) : <span style={gap}>—</span>}
                   </td>
                   <td style={td}>
                     {(r.invest_geographies || []).length
@@ -383,7 +392,7 @@ function RecordPanel({ id, book, onClose, onSaved }:
 
           {f.editor === "chips" && (
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-              {GEOGRAPHIES.map(([v, l]) => {
+              {(f.options || GEOGRAPHIES).map(([v, l]) => {
                 const on = (draft[f.key] || []).includes(v);
                 return (
                   <button key={v} onClick={() => setDraft({

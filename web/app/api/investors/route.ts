@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   const { rows, error } = await selectAll<any>(
     "v_investor_universe",
-    "company_id, legal_name, country_code, fund_type, invest_geographies, " +
+    "company_id, legal_name, country_code, fund_types, invest_geographies, " +
     "ardent_sector, check_band, cheque_min, cheque_max, cheque_source, " +
     "engagement_level, quality_score, priority, last_audited, grade, " +
     "never_approach, holdings, status, status_note, merged_into_id, " +
@@ -62,11 +62,112 @@ export async function GET(req: NextRequest) {
     duplicate_count: rows.filter((r: any) => r.merged_into_id).length,
     // The QC counters this screen is for: what is actually classified.
     total: visible.length,
-    with_fund_type: visible.filter((r: any) => r.fund_type).length,
+    with_fund_type: visible.filter((r: any) => (r.fund_types || []).length).length,
     with_cheque: visible.filter((r: any) => r.cheque_min != null).length,
     with_geography: visible.filter((r: any) => (r.invest_geographies || []).length).length,
     with_sector: visible.filter((r: any) => r.ardent_sector).length,
   });
+}
+
+// POST -> create a fund by hand.
+//
+// The duplicate check is the point of this endpoint being more than an insert.
+// This book already carries Carlyle three times and Bridgepoint three times,
+// one of them an unrelated Canadian firm, and every one of those started as
+// somebody adding a fund that was already there. So a near-match returns 409
+// with the candidates rather than creating the row, and the caller has to say
+// explicitly that it is a different firm.
+export async function POST(req: NextRequest) {
+  const { viewer, deny } = await requireEditor();
+  if (deny) return deny;
+
+  const body = await req.json();
+  const name = String(body?.legal_name || "").trim();
+  if (!name) {
+    return NextResponse.json({ error: "A name is required." }, { status: 400 });
+  }
+
+  const supabase = db();
+
+  if (!body.force) {
+    // Exact-ish first, then anything starting with the same first word — which
+    // is how "Carlyle" and "Carlyle Group" end up as two rows.
+    const firstWord = name.split(/\s+/)[0];
+    const { data: near } = await supabase
+      .from("companies")
+      .select("id, legal_name")
+      .or(`legal_name.ilike.${name},legal_name.ilike.${firstWord}%`)
+      .limit(8);
+    if (near && near.length) {
+      return NextResponse.json({ error: "possible_duplicate", candidates: near },
+        { status: 409 });
+    }
+  }
+
+  const { data: company, error: coErr } = await supabase
+    .from("companies")
+    .insert({
+      legal_name: name,
+      website: body.website || null,
+      country_code: body.country_code || null,
+      city: body.city || null,
+      address_line: body.address_line || null,
+      postcode: body.postcode || null,
+      phone: body.phone || null,
+      description: body.description || null,
+      company_types: ["sponsor"],   // the enum's word for a PE/VC house
+      confidence: 1.0,
+    })
+    .select("id")
+    .single();
+  if (coErr) return NextResponse.json({ error: coErr.message }, { status: 500 });
+
+  const { error: invErr } = await supabase.from("investors").insert({
+    company_id: company.id,
+    fund_types: Array.isArray(body.fund_types) ? body.fund_types : [],
+    invest_geographies: Array.isArray(body.invest_geographies) ? body.invest_geographies : [],
+    ardent_sector: body.ardent_sector || null,
+    check_band: body.check_band || null,
+    priority: body.priority || null,
+    key_investments: body.key_investments || null,
+    quality_score: body.quality_score ? Number(body.quality_score) : null,
+    last_audited: new Date().toISOString().slice(0, 10),
+  });
+  if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 });
+
+  // The named contact, if one was given. Created as the key contact because a
+  // fund entered by hand is one somebody has just spoken to or researched, and
+  // that is exactly who they spoke to.
+  const contact = String(body.contact_name || "").trim();
+  if (contact) {
+    const { data: person } = await supabase
+      .from("people").insert({ full_name: contact, confidence: 1.0 })
+      .select("id").single();
+    if (person) {
+      await supabase.from("person_roles").insert({
+        person_id: person.id,
+        company_id: company.id,
+        title: body.contact_title || null,
+        seniority: "other",
+        email: body.contact_email || null,
+        is_key_contact: true,
+      });
+    }
+  }
+
+  // Entered by hand is itself a fact worth recording — six months on, "where
+  // did this fund come from" has an answer that is not a shrug.
+  await supabase.from("investor_field_history").insert([{
+    company_id: company.id,
+    field: "created",
+    old_value: null,
+    new_value: name,
+    source: "analyst",
+    rationale: body.rationale || "added by hand",
+    changed_by: viewer.id,
+  }]);
+
+  return NextResponse.json({ ok: true, company_id: company.id });
 }
 
 // PATCH -> apply analyst overrides, one history row per field that changed.
@@ -97,7 +198,9 @@ export async function PATCH(req: NextRequest) {
       value = raw === "" || raw == null ? null : Number(raw);
       if (value !== null && Number.isNaN(value)) continue;
     }
-    if (field === "invest_geographies") value = Array.isArray(raw) ? raw : [];
+    if (field === "invest_geographies" || field === "fund_types") {
+      value = Array.isArray(raw) ? raw : [];
+    }
     if (typeof value === "string" && value.trim() === "") value = null;
     if (sameValue(current[field], value)) continue;
 

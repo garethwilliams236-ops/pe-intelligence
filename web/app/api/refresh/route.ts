@@ -22,7 +22,7 @@ const BATCH = 20;
 // so the queue sorts the near-certain from the guessed.
 const PROPOSABLE = new Set([
   "address_line", "postcode", "city", "phone", "website", "description",
-  "fund_type",
+  "fund_types",
 ]);
 
 // Two callers, two proofs. Vercel's scheduler carries the bearer token and has
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   // under esbuild (types stripped) and fails the Vercel build at tsc.
   const { data: queueRows, error: queueErr } = await supabase
     .from("v_refresh_queue")
-    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_type")
+    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_types")
     .eq("hidden", false)
     .not("website", "is", null)
     .order("last_scraped_at", { ascending: true, nullsFirst: true })
@@ -100,13 +100,18 @@ export async function POST(req: NextRequest) {
         // are not differences.
         const norm = (v: unknown) =>
           String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+        // For a set-valued field, "already one of the types we hold" is not a
+        // difference — proposing LBO to a fund already marked LBO is pure noise.
+        if (Array.isArray(current)) return !current.includes(f.value);
         return norm(current) !== norm(f.value) && f.value.trim() !== "";
       })
       .map((f) => ({
         run_id: run.id,
         company_id: inv.company_id,
         field: f.field,
-        current_value: (inv as any)[f.field] ?? null,
+        current_value: Array.isArray((inv as any)[f.field])
+          ? ((inv as any)[f.field] as string[]).join(",") || null
+          : (inv as any)[f.field] ?? null,
         proposed_value: f.value,
         confidence: f.confidence,
         evidence_url: f.url,

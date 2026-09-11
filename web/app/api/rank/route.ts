@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       company_id: row.company_id,
       legal_name: row.legal_name,
       country_code: row.country_code,
-      fund_type: row.fund_type,
+      fund_types: row.fund_types || [],
       invest_geographies: row.invest_geographies || [],
       ardent_sector: row.ardent_sector,
       check_band: row.check_band,
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     qualified: scored.length,
     // Coverage counters, so a thin-looking list can be read as thin DATA
     // rather than a thin market.
-    with_fund_type: scored.filter((s) => s.fund_type).length,
+    with_fund_type: scored.filter((s) => (s.fund_types || []).length).length,
     with_geographies: scored.filter((s) => (s.invest_geographies || []).length).length,
     with_cheque: scored.filter((s) => s.cheque_min != null).length,
     with_evidence: scored.filter((s) => s.revealed !== null).length,
