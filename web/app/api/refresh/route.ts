@@ -50,16 +50,21 @@ export async function POST(req: NextRequest) {
   // Next up: never scraped first, then longest ago, then alphabetical. Hidden
   // funds are skipped — there is no point refreshing a duplicate row or a firm
   // we have recorded as closed.
-  const { data: queue, error: queueErr } = await supabase
+  // The select list is one string rather than a concatenation, and the result
+  // is cast. supabase-js parses the select string at the TYPE level to infer the
+  // row shape; a `"a, b" + "c"` expression is not a literal it can read, so it
+  // gives up and types every row as GenericStringError — which compiles locally
+  // under esbuild (types stripped) and fails the Vercel build at tsc.
+  const { data: queueRows, error: queueErr } = await supabase
     .from("v_refresh_queue")
-    .select("company_id, legal_name, website, address_line, postcode, city, " +
-            "phone, description, fund_type")
+    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_type")
     .eq("hidden", false)
     .not("website", "is", null)
     .order("last_scraped_at", { ascending: true, nullsFirst: true })
     .order("legal_name")
     .limit(size);
   if (queueErr) return NextResponse.json({ error: queueErr.message }, { status: 500 });
+  const queue = (queueRows || []) as any[];
 
   const { data: run, error: runErr } = await supabase
     .from("investor_update_runs")
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
   let attempted = 0, fetched = 0, proposed = 0, failed = 0;
   let ranOut = false;
 
-  for (const inv of queue || []) {
+  for (const inv of queue) {
     if (Date.now() - started > BUDGET_MS) { ranOut = true; break; }
     attempted++;
 

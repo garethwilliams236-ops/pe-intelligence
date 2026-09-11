@@ -28,8 +28,7 @@ export async function GET(req: NextRequest) {
     // for a single named person, on request.
     const { data: team } = await supabase
       .from("v_investor_team")
-      .select("person_id, full_name, title, seniority, is_key_contact, has_email, " +
-              "linkedin_url, is_current")
+      .select("person_id, full_name, title, seniority, is_key_contact, has_email, linkedin_url, is_current")
       .eq("company_id", id)
       .order("rank");
     return NextResponse.json({
@@ -37,7 +36,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const { rows, error } = await selectAll(
+  const { rows, error } = await selectAll<any>(
     "v_investor_universe",
     "company_id, legal_name, country_code, fund_type, invest_geographies, " +
     "ardent_sector, check_band, cheque_min, cheque_max, cheque_source, " +
