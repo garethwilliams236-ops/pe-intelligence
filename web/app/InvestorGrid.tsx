@@ -679,7 +679,11 @@ export function TeamList({ companyId, team }:
         <div key={t.person_id} style={{ padding: "7px 0",
           borderTop: "1px solid #f5f5f4" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 13.5 }}>{t.full_name}</span>
+            <a href={`/contact/${t.person_id}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 13.5, color: "#1c1917" }}>
+              {t.full_name}
+            </a>
             {t.is_key_contact && (
               <span style={{ fontSize: 10.5, padding: "1px 5px", borderRadius: 4,
                 background: "#1c1917", color: "#fff" }}>key</span>
@@ -756,7 +760,11 @@ export function ContactCard({ companyId, person, teamSize }:
     <div style={{ background: "#f5f5f4", borderRadius: 8, padding: "10px 12px",
       marginBottom: 14 }}>
       <div style={{ fontSize: 11.5, color: "#a8a29e", marginBottom: 2 }}>Key contact</div>
-      <div style={{ fontSize: 14 }}>{person.full_name}</div>
+      <div style={{ fontSize: 14 }}>
+        <a href={`/contact/${person.person_id}`} style={{ color: "#1c1917" }}>
+          {person.full_name}
+        </a>
+      </div>
       {person.title && (
         <div style={{ fontSize: 12, color: "#78716c" }}>{person.title}</div>
       )}

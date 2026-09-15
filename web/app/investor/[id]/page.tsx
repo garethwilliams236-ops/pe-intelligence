@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fundTypesLabel } from "@/lib/rank";
 import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
+import AddContact from "../../AddContact";
 
 // The full record. The skyscraper in the book is for a quick correction; this is
 // where the whole team lives, and where the provenance of every field is
@@ -10,9 +11,10 @@ import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../Inves
 export default function FundPage({ params }: { params: { id: string } }) {
   const id = params.id;
   const [data, setData] = useState<any>(null);
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch(`/api/investors?id=${id}`).then((r) => r.json()).then(setData);
   }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   if (!data) return <main style={{ padding: 32 }}>Loading…</main>;
   if (data.error) return <main style={{ padding: 32, color: "#b91c1c" }}>{data.error}</main>;
@@ -92,6 +94,7 @@ export default function FundPage({ params }: { params: { id: string } }) {
               </span>
             </div>
             <TeamList companyId={id} team={team} />
+            <AddContact companyId={id} onAdded={load} />
           </div>
 
           <div style={card}>
