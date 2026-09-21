@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FUNCTION, SENIORITY, functionLabel, seniorityLabel } from "@/lib/contacts";
+import InteractionLog from "../../InteractionLog";
 
 // The contact record, laid out like the IB CRM's so that moving between the two
 // does not mean relearning where anything is.
@@ -282,6 +283,14 @@ export default function ContactPage({ params }: { params: { id: string } }) {
                 <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{p.bio}</div>
               </div>
             )}
+          </div>
+
+          <div style={card}>
+            <InteractionLog
+              personId={id}
+              defaultPersonIds={[id]}
+              defaultCompanyIds={current ? [current.company_id] : []}
+            />
           </div>
 
           <div style={card}>

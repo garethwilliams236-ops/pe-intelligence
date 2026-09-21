@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fundTypesLabel } from "@/lib/rank";
 import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
 import AddContact from "../../AddContact";
+import InteractionLog from "../../InteractionLog";
 
 // The full record. The skyscraper in the book is for a quick correction; this is
 // where the whole team lives, and where the provenance of every field is
@@ -95,6 +96,15 @@ export default function FundPage({ params }: { params: { id: string } }) {
             </div>
             <TeamList companyId={id} team={team} />
             <AddContact companyId={id} onAdded={load} />
+          </div>
+
+          <div style={card}>
+            <InteractionLog
+              companyId={id}
+              defaultCompanyIds={[id]}
+              people={team.map((t) => ({ person_id: t.person_id,
+                full_name: t.full_name }))}
+            />
           </div>
 
           <div style={card}>
