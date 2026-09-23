@@ -4,7 +4,7 @@ import { requireEditor, requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-// Which table a field lives on. fund_type is the only proposable field that
+// Which table a field lives on. fund_types is the only proposable field that
 // hangs off the investor rather than the company, and getting this wrong writes
 // silently to nothing, so it is stated once here rather than inferred.
 const ON_INVESTOR = new Set(["fund_types", "ardent_sector", "check_band",
@@ -20,11 +20,16 @@ function forColumn(field: string, value: string | null): unknown {
   return (value || "").split(",").map((v) => v.trim()).filter(Boolean);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const { deny } = await requireUser();
   if (deny) return deny;
   const supabase = db();
-  const { data, error } = await supabase
+
+  // ?company_id= narrows to one fund, for the Refresh now button on its own
+  // page. Same rows, same shape, so the review UI does not care which it got.
+  const only = req.nextUrl.searchParams.get("company_id");
+
+  let q = supabase
     .from("v_pending_proposals")
     .select("*")
     // Most confident first: the near-certain ones clear in a keystroke and the
@@ -32,7 +37,11 @@ export async function GET() {
     .order("confidence", { ascending: false })
     .order("legal_name")
     .limit(1000);
+  if (only) q = q.eq("company_id", only);
+  const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if (only) return NextResponse.json({ rows: data || [] });
 
   const { data: runs } = await supabase
     .from("investor_update_runs")

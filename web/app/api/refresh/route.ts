@@ -81,15 +81,25 @@ export async function POST(req: NextRequest) {
   // row shape; a `"a, b" + "c"` expression is not a literal it can read, so it
   // gives up and types every row as GenericStringError — which compiles locally
   // under esbuild (types stripped) and fails the Vercel build at tsc.
+  // One named fund, asked for from its own page, skips the queue entirely —
+  // no scope, and no `hidden` filter. If you have opened a defunct or duplicate
+  // record and pressed the button, refreshing it is exactly what you meant; the
+  // hidden filter exists to stop the NIGHTLY rotation wasting its budget there.
+  const only = typeof body?.company_id === "string" ? body.company_id : null;
+
   let query = supabase
     .from("v_refresh_queue")
-    .select("company_id, legal_name, website, address_line, postcode, city, phone, description, fund_types, key_contact")
-    .eq("hidden", false);
-  query = SCOPES[scope](query);
+    .select("company_id, legal_name, website, address_line, postcode, city, " +
+            "phone, description, fund_types, key_contact");
+  if (only) {
+    query = query.eq("company_id", only);
+  } else {
+    query = SCOPES[scope](query.eq("hidden", false));
+  }
   const { data: queueRows, error: queueErr } = await query
     .order("last_scraped_at", { ascending: true, nullsFirst: true })
     .order("legal_name")
-    .limit(size);
+    .limit(only ? 1 : size);
   if (queueErr) return NextResponse.json({ error: queueErr.message }, { status: 500 });
   const queue = (queueRows || []) as any[];
 
@@ -147,10 +157,10 @@ export async function POST(req: NextRequest) {
     const hint = fundTypeHint(pages);
     if (hint) found.push(hint);
 
-    // Contacts are proposed as their own field rather than an investor column,
-    // because accepting one creates a person and a role rather than setting a
-    // value. One per run: a team page yields a dozen and a queue of a dozen per
-    // fund is unreviewable.
+    // Contacts are proposed as their own field rather than as an investor
+    // column, because accepting one creates a person and a role rather than
+    // setting a value. One per run: the highest-confidence address, since a
+    // team page yields a dozen and a queue of a dozen per fund is unreviewable.
     if (plan.contacts && !inv.key_contact) {
       let host: string | undefined;
       try { host = new URL(pages[0].url).hostname; } catch { /* ignore */ }
@@ -168,15 +178,17 @@ export async function POST(req: NextRequest) {
     }
 
     const rows = found
-      .filter((f) => f.field === "contact" ? plan.contacts : plan.fields.includes(f.field))
+      .filter((f) => f.field === "contact"
+        ? plan.contacts
+        : plan.fields.includes(f.field))
       .filter((f) => {
         const current = (inv as any)[f.field];
         // Only differences are worth a human's attention. Whitespace and case
-        // are not differences.
+        // are not differences — and for a set-valued field, "already one of the
+        // types we hold" is not a difference either: proposing LBO to a fund
+        // already marked LBO and growth would be pure noise.
         const norm = (v: unknown) =>
           String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-        // For a set-valued field, "already one of the types we hold" is not a
-        // difference — proposing LBO to a fund already marked LBO is pure noise.
         if (Array.isArray(current)) return !current.includes(f.value);
         return norm(current) !== norm(f.value) && f.value.trim() !== "";
       })
@@ -217,12 +229,20 @@ export async function POST(req: NextRequest) {
   await supabase.from("investor_update_runs").update({
     finished_at: new Date().toISOString(),
     attempted, fetched, proposed, failed,
-    notes: ranOut ? "stopped on time budget; remainder stays at the head of the queue" : null,
+    notes: only
+      ? `targeted: ${queue[0]?.legal_name || only}`
+      : ranOut ? "stopped on time budget; remainder stays at the head of the queue"
+      : null,
   }).eq("id", run.id);
 
   return NextResponse.json({
     run_id: run.id, trigger, scope, goal, attempted, fetched, proposed, failed,
     stopped_early: ranOut,
+    targeted: only,
+    // A fund with nothing new is not the same as a fund we could not read, and
+    // the button must be able to tell you which. `attempted` of zero means the
+    // id matched nothing at all.
+    error: only && !queue.length ? "That fund is not in the refresh queue." : undefined,
     seconds: Math.round((Date.now() - started) / 1000),
   });
 }

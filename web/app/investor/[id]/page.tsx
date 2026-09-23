@@ -5,6 +5,7 @@ import { fundTypesLabel } from "@/lib/rank";
 import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
 import AddContact from "../../AddContact";
 import InteractionLog from "../../InteractionLog";
+import RefreshFund from "../../RefreshFund";
 
 // The full record. The skyscraper in the book is for a quick correction; this is
 // where the whole team lives, and where the provenance of every field is
@@ -96,6 +97,10 @@ export default function FundPage({ params }: { params: { id: string } }) {
             </div>
             <TeamList companyId={id} team={team} />
             <AddContact companyId={id} onAdded={load} />
+          </div>
+
+          <div style={card}>
+            <RefreshFund companyId={id} hasWebsite={!!r.website} onApplied={load} />
           </div>
 
           <div style={card}>

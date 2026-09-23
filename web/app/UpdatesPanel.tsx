@@ -1,16 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ARDENT_FUND_TYPES, fundTypesLabel } from "@/lib/rank";
-import { CHEQUE_BANDS } from "@/lib/fields";
 import { WebLink } from "./InvestorGrid";
-
-type Proposal = {
-  id: string; company_id: string; legal_name: string; website: string | null;
-  field: string; current_value: string | null; proposed_value: string | null;
-  confidence: number; evidence_url: string | null; evidence_snippet: string | null;
-  created_at: string;
-};
+import ProposalRow, { Proposal } from "./ProposalRow";
 
 type Run = {
   id: string; started_at: string; finished_at: string | null; trigger: string;
@@ -18,42 +10,9 @@ type Run = {
   notes: string | null;
 };
 
-const FIELD_LABEL: Record<string, string> = {
-  address_line: "Address", postcode: "Postcode", city: "City", phone: "Switchboard",
-  website: "Website", description: "Description", fund_types: "Fund type",
-  contact: "Contact",
-};
-
-// Fields with a closed vocabulary amend through a dropdown, never a text box.
-// Typing a fund type by hand can produce a value the enum will refuse — the
-// write fails, and the queue keeps the proposal pending as though nothing
-// happened. The Bible only holds these nine, so only these nine are offerable.
-const OPTIONS: Record<string, [string, string][]> = {
-  fund_types: ARDENT_FUND_TYPES,
-  check_band: CHEQUE_BANDS,
-};
-
-// Set-valued fields amend by toggling, not by picking one. A fund can be an LBO
-// house and a growth investor, and the scraper only ever proposes one of them.
-const MULTI = new Set(["fund_types"]);
-
-function show(field: string, value: string | null) {
-  if (value == null || value === "") return "—";
-  if (MULTI.has(field)) return fundTypesLabel(value.split(",").filter(Boolean));
-  // A contact is stored as "Name|email" because the proposals table holds one
-  // text column per field; it should not read that way on the page.
-  if (field === "contact") {
-    const [name, email] = value.split("|");
-    return name ? `${name} — ${email}` : email;
-  }
-  return value;
-}
-
 export default function UpdatesPanel() {
   const [data, setData] = useState<any>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [amending, setAmending] = useState<Record<string, string>>({});
   const [scope, setScope] = useState("oldest");
   const [goal, setGoal] = useState("all");
 
@@ -61,19 +20,6 @@ export default function UpdatesPanel() {
     setData(await (await fetch("/api/proposals")).json());
   }
   useEffect(() => { load(); }, []);
-
-  async function decide(id: string, action: string, value?: string) {
-    setBusy(id);
-    const res = await fetch("/api/proposals", {
-      method: "PATCH", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, action, value }),
-    });
-    const out = await res.json();
-    setBusy(null);
-    if (out.error) return alert(out.error);
-    setAmending((a) => { const n = { ...a }; delete n[id]; return n; });
-    load();
-  }
 
   async function runNow() {
     setRunning(true);
@@ -178,116 +124,7 @@ export default function UpdatesPanel() {
           </div>
 
           {items.map((p) => (
-            <div key={p.id} style={{ padding: "10px 0", borderTop: "1px solid #f5f5f4" }}>
-              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <div style={{ width: 96, fontSize: 12, color: "#78716c", paddingTop: 2 }}>
-                  {FIELD_LABEL[p.field] || p.field}
-                  <div style={{ fontSize: 11,
-                    color: p.confidence >= 0.7 ? "#a8a29e" : "#b45309" }}>
-                    {Math.round(p.confidence * 100)}% sure
-                  </div>
-                </div>
-
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: "#a8a29e",
-                    textDecoration: p.current_value ? "line-through" : "none" }}>
-                    {show(p.field, p.current_value)}
-                  </div>
-                  {amending[p.id] !== undefined ? (
-                    MULTI.has(p.field) ? (
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
-                        {(OPTIONS[p.field] || []).map(([v, l]) => {
-                          const chosen = amending[p.id].split(",").filter(Boolean);
-                          const on = chosen.includes(v);
-                          return (
-                            <button key={v} onClick={() => setAmending({
-                              ...amending,
-                              [p.id]: (on ? chosen.filter((c) => c !== v) : [...chosen, v])
-                                .join(","),
-                            })} style={{
-                              padding: "4px 9px", borderRadius: 999, fontSize: 12,
-                              cursor: "pointer",
-                              border: "1px solid " + (on ? "#1c1917" : "#e7e5e4"),
-                              background: on ? "#1c1917" : "#fff",
-                              color: on ? "#fff" : "#44403c" }}>
-                              {l}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : OPTIONS[p.field] ? (
-                      <select autoFocus value={amending[p.id]}
-                        onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
-                        style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
-                          border: "1px solid #1c1917", borderRadius: 6, marginTop: 3,
-                          background: "#fff" }}>
-                        <option value="">— clear it —</option>
-                        {OPTIONS[p.field].map(([v, l]) => (
-                          <option key={v} value={v}>{l}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input autoFocus value={amending[p.id]}
-                        onChange={(e) => setAmending({ ...amending, [p.id]: e.target.value })}
-                        style={{ width: "100%", padding: "6px 8px", fontSize: 13.5,
-                          border: "1px solid #1c1917", borderRadius: 6, marginTop: 3 }} />
-                    )
-                  ) : (
-                    <div style={{ fontSize: 14, marginTop: 2 }}>
-                      {show(p.field, p.proposed_value)}
-                    </div>
-                  )}
-                  {p.evidence_snippet && (
-                    <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 4 }}>
-                      “{p.evidence_snippet}”
-                      {p.evidence_url && (
-                        <> · <a href={p.evidence_url} target="_blank" rel="noreferrer"
-                          style={{ color: "#78716c" }}>source</a></>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-                  {amending[p.id] !== undefined ? (
-                    <>
-                      <button style={{ ...btn, borderColor: "#1c1917" }}
-                        disabled={busy === p.id}
-                        onClick={() => decide(p.id, "amend", amending[p.id])}>
-                        Save
-                      </button>
-                      <button style={btn} onClick={() => setAmending((a) => {
-                        const n = { ...a }; delete n[p.id]; return n;
-                      })}>Cancel</button>
-                    </>
-                  ) : (
-                    <>
-                      <button style={{ ...btn, borderColor: "#1c1917" }}
-                        disabled={busy === p.id}
-                        onClick={() => decide(p.id, "accept")}>
-                        Accept
-                      </button>
-                      <button style={btn} disabled={busy === p.id}
-                        onClick={() => setAmending({
-                          ...amending,
-                          [p.id]: MULTI.has(p.field)
-                            ? [...new Set([
-                                ...(p.current_value || "").split(",").filter(Boolean),
-                                ...(p.proposed_value || "").split(",").filter(Boolean),
-                              ])].join(",")
-                            : p.proposed_value || "",
-                        })}>
-                        Amend
-                      </button>
-                      <button style={{ ...btn, color: "#b91c1c" }} disabled={busy === p.id}
-                        onClick={() => decide(p.id, "reject")}>
-                        Reject
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+            <ProposalRow key={p.id} p={p} onDecided={load} />
           ))}
         </div>
       ))}

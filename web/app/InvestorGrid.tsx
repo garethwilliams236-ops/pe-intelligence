@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ARDENT_FUND_TYPES, fundTypesLabel, sharesType } from "@/lib/rank";
 import { CHEQUE_BANDS, COMPANY_FIELDS, EDITABLE, FieldDef, GEOGRAPHIES, sameValue } from "@/lib/fields";
+import MultiSelect from "./MultiSelect";
 
 export type Row = {
   company_id: string; legal_name: string; country_code: string | null;
@@ -92,6 +93,8 @@ export default function InvestorGrid() {
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [bandFilter, setBandFilter] = useState<string[]>([]);
+  const [sectorFilter, setSectorFilter] = useState<string[]>([]);
+  const [geoFilter, setGeoFilter] = useState<string[]>([]);
   const [ticket, setTicket] = useState("");
   const [onlyGaps, setOnlyGaps] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
@@ -119,6 +122,26 @@ export default function InvestorGrid() {
         if (!hit) return false;
       }
       if (bandFilter.length && !overlapsBands(r, bandFilter)) return false;
+
+      // Sector is a single value per fund, so this is equality against any of
+      // the chosen ones — unlike fund type and geography, which are sets and
+      // match on overlap. Trimmed on both sides: one fund carries "Consumer "
+      // with a trailing space, which would otherwise be its own sector forever.
+      if (sectorFilter.length) {
+        const s = (r.ardent_sector || "").trim();
+        const hit = (!s && sectorFilter.includes(MISSING))
+          || (!!s && sectorFilter.includes(s));
+        if (!hit) return false;
+      }
+
+      // Where the money goes, not where the office is.
+      if (geoFilter.length) {
+        const gs = r.invest_geographies || [];
+        const hit = (!gs.length && geoFilter.includes(MISSING))
+          || gs.some((g) => geoFilter.includes(g));
+        if (!hit) return false;
+      }
+
       // An exact figure is a different question from a band — "who can write
       // £8m" rather than "who plays in the £5-20m bracket" — so it narrows
       // alongside the bands rather than replacing them.
@@ -137,11 +160,24 @@ export default function InvestorGrid() {
       if (onlyGaps === "contact" && r.key_contact) return false;
       return true;
     });
-  }, [rows, q, typeFilter, bandFilter, ticket, onlyGaps]);
+  }, [rows, q, typeFilter, bandFilter, sectorFilter, geoFilter, ticket, onlyGaps]);
 
-  function toggleType(key: string) {
-    setTypeFilter((p) => p.includes(key) ? p.filter((k) => k !== key) : [...p, key]);
-  }
+  // The sector list is DERIVED from the book rather than hardcoded. Ardent's
+  // sector vocabulary lives on the control sheet, not in this repo, so a
+  // hardcoded copy would drift the first time somebody adds one — and a sector
+  // the dropdown has never heard of would become invisible rather than wrong.
+  const sectorOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const r of rows) {
+      const s = (r.ardent_sector || "").trim();
+      if (s) seen.set(s, (seen.get(s) || 0) + 1);
+    }
+    return [...seen.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({ key, label: key, count }));
+  }, [rows]);
+
+  const countBy = (pred: (r: Row) => boolean) => rows.filter(pred).length;
 
   const chip = (on: boolean) => ({
     padding: "5px 10px", borderRadius: 999, fontSize: 12.5, cursor: "pointer",
@@ -180,28 +216,25 @@ export default function InvestorGrid() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10,
           alignItems: "center" }}>
           <span style={{ ...filterLabel }}>Fund type</span>
-          {ARDENT_FUND_TYPES.map(([key, name]) => (
-            <button key={key} onClick={() => toggleType(key)} style={chip(typeFilter.includes(key))}>
-              {name}
-            </button>
-          ))}
-          <button onClick={() => toggleType(MISSING)} style={{
-            ...chip(typeFilter.includes(MISSING)), fontStyle: "italic" }}>
-            unclassified
-          </button>
+          <MultiSelect label="Fund type" value={typeFilter} onChange={setTypeFilter}
+            options={[
+              ...ARDENT_FUND_TYPES.map(([key, name]) => ({
+                key, label: name,
+                count: countBy((r) => (r.fund_types || []).includes(key)),
+              })),
+              { key: MISSING, label: "unclassified", italic: true,
+                count: countBy((r) => !(r.fund_types || []).length) },
+            ]} />
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10,
           alignItems: "center" }}>
           <span style={{ ...filterLabel }}>Ticket size</span>
-          {CHEQUE_BANDS.map(([key, name]) => (
-            <button key={key} onClick={() => setBandFilter(
-              bandFilter.includes(key) ? bandFilter.filter((b) => b !== key)
-                                       : [...bandFilter, key])}
-              style={chip(bandFilter.includes(key))}>
-              {name}
-            </button>
-          ))}
+          <MultiSelect label="Ticket size" value={bandFilter} onChange={setBandFilter}
+            options={CHEQUE_BANDS.map(([key, name]) => ({
+              key, label: name,
+              count: countBy((r) => overlapsBands(r, [key])),
+            }))} />
           <span style={{ fontSize: 12, color: "#a8a29e" }}>or exactly</span>
           <input value={ticket ? Number(ticket.replace(/\D/g, "")).toLocaleString("en-GB") : ""}
             onChange={(e) => setTicket(e.target.value.replace(/\D/g, ""))}
@@ -210,17 +243,35 @@ export default function InvestorGrid() {
               borderRadius: 6, fontSize: 13 }} />
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14,
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10,
           alignItems: "center" }}>
-          <span style={{ ...filterLabel }}>Sector focus</span>
-          <span style={{ fontSize: 12.5, color: "#a8a29e", fontStyle: "italic" }}>
-            to be decided — the sector vocabulary needs settling before this can
-            filter on anything meaningful
-          </span>
+          <span style={{ ...filterLabel }}>Sector</span>
+          <MultiSelect label="Sector" value={sectorFilter} onChange={setSectorFilter}
+            options={[
+              ...sectorOptions,
+              { key: MISSING, label: "unclassified", italic: true,
+                count: countBy((r) => !(r.ardent_sector || "").trim()) },
+            ]} />
         </div>
 
-        {(typeFilter.length > 0 || bandFilter.length > 0 || q || ticket || onlyGaps) && (
-          <button onClick={() => { setTypeFilter([]); setBandFilter([]); setQ("");
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14,
+          alignItems: "center" }}>
+          <span style={{ ...filterLabel }}>Invests in</span>
+          <MultiSelect label="Invests in" value={geoFilter} onChange={setGeoFilter}
+            options={[
+              ...GEOGRAPHIES.map(([key, name]) => ({
+                key, label: name,
+                count: countBy((r) => (r.invest_geographies || []).includes(key)),
+              })),
+              { key: MISSING, label: "unclassified", italic: true,
+                count: countBy((r) => !(r.invest_geographies || []).length) },
+            ]} />
+        </div>
+
+        {(typeFilter.length > 0 || bandFilter.length > 0 || sectorFilter.length > 0
+          || geoFilter.length > 0 || q || ticket || onlyGaps) && (
+          <button onClick={() => { setTypeFilter([]); setBandFilter([]);
+            setSectorFilter([]); setGeoFilter([]); setQ("");
             setTicket(""); setOnlyGaps(null); }}
             style={{ ...chip(false), color: "#a8a29e", marginBottom: 12 }}>
             clear filters
@@ -350,8 +401,9 @@ export default function InvestorGrid() {
 }
 
 // ---------------------------------------------------------------------------
-// The skyscraper. Narrow it is for correcting one field; widened it becomes the
-// whole record, contact half included, without losing the list behind it.
+// The skyscraper. Quick correction and the contact, with the full record a
+// click away — anything that needs the whole team or the history in depth
+// belongs on the fund page, not in a 380px column.
 // ---------------------------------------------------------------------------
 function RecordPanel({ id, book, onClose, onSaved }:
   { id: string; book: Row[]; onClose: () => void; onSaved: () => void }) {
