@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ARDENT_FUND_TYPES, fundTypesLabel, sharesType } from "@/lib/rank";
 import { CHEQUE_BANDS, COMPANY_FIELDS, EDITABLE, FieldDef, GEOGRAPHIES, sameValue } from "@/lib/fields";
 import MultiSelect from "./MultiSelect";
+import RecordEditor, { HistoryList } from "./RecordEditor";
+import AddContact from "./AddContact";
+import InteractionLog from "./InteractionLog";
+import RefreshFund from "./RefreshFund";
 
 export type Row = {
   company_id: string; legal_name: string; country_code: string | null;
@@ -401,64 +405,42 @@ export default function InvestorGrid() {
 }
 
 // ---------------------------------------------------------------------------
-// The skyscraper. Quick correction and the contact, with the full record a
-// click away — anything that needs the whole team or the history in depth
-// belongs on the fund page, not in a 380px column.
+// The Bible's slide-out record. Everything the fund page can do, in a column
+// you can open without losing your place in 1,285 filtered rows.
+//
+// "Everything" is literal and it is why each block below is an import rather
+// than markup: RecordEditor, TeamList, AddContact, RefreshFund and
+// InteractionLog are the same components the fund page mounts. Two surfaces
+// that merely LOOK alike drift the first time one of them is touched — which
+// is exactly how this panel ended up able to set a website but not add a
+// contact, and the page the reverse.
 // ---------------------------------------------------------------------------
 function RecordPanel({ id, book, onClose, onSaved }:
   { id: string; book: Row[]; onClose: () => void; onSaved: () => void }) {
   const [record, setRecord] = useState<any>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [history, setHistory] = useState<History[]>([]);
-  const [draft, setDraft] = useState<Record<string, any>>({});
-  const [rationale, setRationale] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [dupName, setDupName] = useState("");
+  // Bumped on every reload and used as the editor's key, so a record that
+  // changes underneath — a scraped proposal accepted in the panel itself —
+  // remounts the form against the new values instead of leaving a draft that
+  // reports fields as "changed" when they are not.
+  const [version, setVersion] = useState(0);
   // 380px is right for correcting one field and wrong for reading a firm. The
   // panel grows rather than the record living on a separate page you lose the
   // list to get to.
   const [size, setSize] = useState<"narrow" | "wide" | "full">("narrow");
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const d = await (await fetch(`/api/investors?id=${id}`)).json();
     setRecord(d.investor);
     setTeam(d.team || []);
     setHistory(d.history || []);
-    const start: Record<string, any> = {};
-    for (const f of [...EDITABLE, ...COMPANY_FIELDS]) {
-      start[f.key] = f.key === "invest_geographies"
-        ? [...(d.investor?.invest_geographies || [])]
-        : d.investor?.[f.key] ?? "";
-    }
-    setDraft(start);
-  }
-
-  useEffect(() => {
-    setRecord(null); setDraft({}); setRationale(""); setDupName("");
-    refresh();
-    /* eslint-disable-next-line */
+    setVersion((v) => v + 1);
   }, [id]);
 
-  const dirty = useMemo(() => {
-    if (!record) return [];
-    return [...EDITABLE, ...COMPANY_FIELDS]
-      .filter((f) => !sameValue(record[f.key], draft[f.key])).map((f) => f.key);
-  }, [record, draft]);
+  useEffect(() => { setRecord(null); refresh(); }, [refresh]);
 
-  async function patch(changes: Record<string, any>) {
-    setBusy(true);
-    const res = await fetch("/api/investors", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ company_id: id, changes, rationale }),
-    });
-    const out = await res.json();
-    setBusy(false);
-    if (out.error) return alert(out.error);
-    setRationale("");
-    onSaved();
-    refresh();
-  }
+  const saved = () => { onSaved(); refresh(); };
 
   const box: Record<string, any> = size === "full"
     ? { position: "fixed", inset: 20, zIndex: 50, background: "#fff",
@@ -468,11 +450,9 @@ function RecordPanel({ id, book, onClose, onSaved }:
         border: "1px solid #e7e5e4", borderRadius: 10, padding: 16,
         position: "sticky", top: 16, maxHeight: "88vh", overflow: "auto" };
   const expanded = size !== "narrow";
-  const field = { padding: "7px 9px", border: "1px solid #d6d3d1", borderRadius: 6,
-    fontSize: 13.5, width: "100%", boxSizing: "border-box" as const, background: "#fff" };
-  const lab = { fontSize: 12, color: "#57534e", display: "block", marginBottom: 3 };
   const small = { padding: "6px 10px", borderRadius: 6, fontSize: 12.5, cursor: "pointer",
     border: "1px solid #e7e5e4", background: "#fff", color: "#44403c" };
+  const block = { marginTop: 18, paddingTop: 14, borderTop: "1px solid #e7e5e4" };
 
   if (!record) return <div style={box}>Loading…</div>;
 
@@ -510,190 +490,41 @@ function RecordPanel({ id, book, onClose, onSaved }:
       <p style={{ fontSize: 12, color: "#a8a29e", margin: "10px 0 14px" }}>
         {record.country_code ? `Office ${record.country_code}` : "No office country on file"}
         {record.holdings ? ` · ${record.holdings} portfolio companies captured` : ""}
+        {record.grade ? ` · grade ${String(record.grade).toUpperCase()}` : ""}
       </p>
 
-      <div style={expanded
-        ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, alignItems: "start" }
-        : {}}>
-      <div>
       <ContactCard companyId={id} person={keyContact} teamSize={team.length} />
 
-      {EDITABLE.map((f: FieldDef) => (
-        <div key={f.key} style={{ marginBottom: 12 }}>
-          <label style={lab}>
-            {f.label}
-            {dirty.includes(f.key) && (
-              <span style={{ color: "#b45309", marginLeft: 6 }}>changed</span>
-            )}
-          </label>
+      <RecordEditor key={version} id={id} record={record} book={book}
+        columns={expanded ? 2 : 1} onSaved={saved} />
 
-          {f.editor === "select" && (
-            <select style={field} value={draft[f.key] ?? ""}
-              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}>
-              <option value="">— not set —</option>
-              {(f.options || []).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          )}
-
-          {f.editor === "chips" && (
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-              {(f.options || GEOGRAPHIES).map(([v, l]) => {
-                const on = (draft[f.key] || []).includes(v);
-                return (
-                  <button key={v} onClick={() => setDraft({
-                    ...draft,
-                    [f.key]: on ? (draft[f.key] || []).filter((x: string) => x !== v)
-                                : [...(draft[f.key] || []), v],
-                  })} style={{
-                    padding: "5px 10px", borderRadius: 999, fontSize: 12.5, cursor: "pointer",
-                    border: "1px solid " + (on ? "#1c1917" : "#e7e5e4"),
-                    background: on ? "#1c1917" : "#fff", color: on ? "#fff" : "#44403c" }}>
-                    {l}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {(f.editor === "text" || f.editor === "number") && (
-            <input style={field} type={f.editor === "number" ? "number" : "text"}
-              value={draft[f.key] ?? ""}
-              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />
-          )}
-
-          {f.editor === "textarea" && (
-            <textarea style={{ ...field, minHeight: 56 }} value={draft[f.key] ?? ""}
-              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />
-          )}
-
-          {f.hint && (
-            <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 3 }}>{f.hint}</div>
-          )}
+      <div style={block}>
+        <div style={{ display: "flex", alignItems: "baseline", marginBottom: 8 }}>
+          <strong style={{ fontSize: 15 }}>Team</strong>
+          <span style={{ marginLeft: 8, fontSize: 12.5, color: "#a8a29e" }}>
+            {team.length
+              ? `${team.length} on file, ${team.filter((t) => t.has_email).length} with an address`
+              : "nobody on file"}
+          </span>
         </div>
-      ))}
-
+        <TeamList companyId={id} team={team} />
+        <AddContact companyId={id} onAdded={refresh} />
       </div>
 
-      {/* The contact half. Only worth the space once the panel is open wide,
-          and it is the half an analyst reads rather than edits. */}
-      {expanded && (
-        <div>
-          <div style={{ ...lab, marginBottom: 8, fontWeight: 600 }}>Contact</div>
-          {COMPANY_FIELDS.map((f: FieldDef) => (
-            <div key={f.key} style={{ marginBottom: 10 }}>
-              <label style={lab}>
-                {f.label}
-                {!sameValue(record[f.key], draft[f.key]) && (
-                  <span style={{ color: "#b45309", marginLeft: 6 }}>changed</span>
-                )}
-              </label>
-              {f.editor === "textarea"
-                ? <textarea style={{ ...field, minHeight: 48 }} value={draft[f.key] ?? ""}
-                    onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />
-                : <input style={field} value={draft[f.key] ?? ""}
-                    onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />}
-              {f.hint && (
-                <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 3 }}>{f.hint}</div>
-              )}
-            </div>
-          ))}
-
-          <div style={{ ...lab, margin: "16px 0 8px", fontWeight: 600 }}>
-            Team — {team.length || "nobody"} on file
-            {team.length ? `, ${team.filter((t) => t.has_email).length} reachable` : ""}
-          </div>
-          <TeamList companyId={id} team={team} />
-        </div>
-      )}
+      <div style={block}>
+        <RefreshFund companyId={id} hasWebsite={!!record.website} onApplied={saved} />
       </div>
 
-      <div style={{ marginBottom: 10 }}>
-        <label style={lab}>Why (optional, kept with the change)</label>
-        <input style={field} value={rationale}
-          onChange={(e) => setRationale(e.target.value)}
-          placeholder="e.g. confirmed on their site, Sept 2026" />
+      <div style={block}>
+        <InteractionLog companyId={id} defaultCompanyIds={[id]}
+          people={team.map((t) => ({ person_id: t.person_id, full_name: t.full_name }))} />
       </div>
 
-      <button onClick={() => {
-        const changes: Record<string, any> = {};
-        for (const k of dirty) changes[k] = draft[k];
-        patch(changes);
-      }} disabled={busy || !dirty.length} style={{
-        width: "100%", padding: "9px 0", borderRadius: 6, border: "none", fontSize: 14,
-        background: dirty.length ? "#1c1917" : "#e7e5e4",
-        color: dirty.length ? "#fff" : "#a8a29e",
-        cursor: dirty.length ? "pointer" : "default" }}>
-        {busy ? "Saving…" : dirty.length
-          ? `Save ${dirty.length} change${dirty.length > 1 ? "s" : ""}`
-          : "No changes"}
-      </button>
-
-      {/* Removal, kept apart from the fields above and from each other. Neither
-          deletes anything; both are one click to undo. */}
-      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #f5f5f4" }}>
-        <div style={{ ...lab, marginBottom: 8 }}>Take out of the Bible</div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {record.status !== "defunct" ? (
-            <button style={small} onClick={() => patch({ status: "defunct" })}>
-              Mark defunct
-            </button>
-          ) : (
-            <button style={small} onClick={() => patch({ status: "active" })}>
-              No longer defunct
-            </button>
-          )}
-          {record.merged_into_id && (
-            <button style={small} onClick={() => patch({ merged_into_id: null })}>
-              Not a duplicate
-            </button>
-          )}
-        </div>
-
-        {!record.merged_into_id && (
-          <div style={{ marginTop: 8 }}>
-            <input list="fund-names" style={field} value={dupName}
-              onChange={(e) => setDupName(e.target.value)}
-              placeholder="Duplicate of… (type the surviving fund)" />
-            <datalist id="fund-names">
-              {book.filter((b) => b.company_id !== id)
-                .map((b) => <option key={b.company_id} value={b.legal_name} />)}
-            </datalist>
-            {dupName && (
-              <button style={{ ...small, marginTop: 6 }} onClick={() => {
-                const hit = book.find((b) => b.legal_name === dupName &&
-                  b.company_id !== id);
-                if (!hit) return alert("Pick a fund from the list.");
-                patch({ merged_into_id: hit.company_id });
-              }}>
-                Merge into {dupName}
-              </button>
-            )}
-            <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 4 }}>
-              The duplicate keeps its evidence and points at the survivor — nothing
-              is deleted.
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ marginTop: 18 }}>
+      <div style={block}>
         <div style={{ fontSize: 12, color: "#57534e", marginBottom: 6 }}>
           History {history.length ? `(${history.length})` : ""}
         </div>
-        {!history.length && (
-          <div style={{ fontSize: 12.5, color: "#a8a29e" }}>Nothing recorded yet.</div>
-        )}
-        {history.slice(0, 12).map((h, i) => (
-          <div key={i} style={{ fontSize: 12, color: "#57534e", padding: "5px 0",
-            borderTop: "1px solid #f5f5f4" }}>
-            <span style={{ color: "#a8a29e" }}>
-              {h.changed_at.slice(0, 10)} · {h.source}
-            </span>{" "}
-            {h.field}: <span style={{ color: "#a8a29e" }}>{h.old_value || "—"}</span>
-            {" → "}<strong>{h.new_value || "—"}</strong>
-            {h.rationale && <div style={{ color: "#a8a29e" }}>{h.rationale}</div>}
-          </div>
-        ))}
+        <HistoryList history={history} limit={expanded ? undefined : 12} />
       </div>
     </div>
   );

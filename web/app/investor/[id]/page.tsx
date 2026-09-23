@@ -1,22 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fundTypesLabel } from "@/lib/rank";
-import { ContactCard, TeamList, TeamMember, WebLink, quantum } from "../../InvestorGrid";
+import { ContactCard, TeamList, TeamMember, WebLink } from "../../InvestorGrid";
 import AddContact from "../../AddContact";
 import InteractionLog from "../../InteractionLog";
 import RefreshFund from "../../RefreshFund";
+import RecordEditor, { HistoryList } from "../../RecordEditor";
 
-// The full record. The skyscraper in the book is for a quick correction; this is
-// where the whole team lives, and where the provenance of every field is
-// readable rather than truncated to twelve lines.
+// The fund's own page. Same capabilities as the Bible's slide-out panel, and
+// the same components — the record editor, the team, the refresh, the log and
+// the history are all imported by both. What differs is room: this lays the
+// editor out in two columns and shows the whole history rather than the last
+// twelve, because it is not living in a 380px column.
 export default function FundPage({ params }: { params: { id: string } }) {
   const id = params.id;
   const [data, setData] = useState<any>(null);
+  const [book, setBook] = useState<any[]>([]);
+  const [version, setVersion] = useState(0);
   const load = useCallback(() => {
-    fetch(`/api/investors?id=${id}`).then((r) => r.json()).then(setData);
+    fetch(`/api/investors?id=${id}`).then((r) => r.json()).then((d) => {
+      setData(d);
+      setVersion((v) => v + 1);
+    });
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // The whole book, only for the "duplicate of…" picker. The panel is handed
+  // this by the grid it lives in; a page opened cold has to ask.
+  useEffect(() => {
+    fetch("/api/investors?hidden=1").then((r) => r.json())
+      .then((d) => setBook(d.rows || []));
+  }, []);
 
   if (!data) return <main style={{ padding: 32 }}>Loading…</main>;
   if (data.error) return <main style={{ padding: 32, color: "#b91c1c" }}>{data.error}</main>;
@@ -27,21 +41,14 @@ export default function FundPage({ params }: { params: { id: string } }) {
 
   const card = { background: "#fff", border: "1px solid #e7e5e4", borderRadius: 10,
     padding: 16, marginBottom: 16 };
-  const dt = { fontSize: 11.5, color: "#a8a29e", marginBottom: 2 };
-  const dd = { fontSize: 14, marginBottom: 12 };
-
-  const facts: [string, any][] = [
-    ["Fund type", fundTypesLabel(r.fund_types) || null],
-    ["Cheque", quantum(r)],
-    ["Invests in", (r.invest_geographies || []).join(" / ") || null],
-    ["Sector", r.ardent_sector],
-    ["Office", r.country_code],
-    ["Quality", r.quality_score],
-    ["Priority", r.priority],
-    ["Engagement", r.engagement_level],
-    ["Last audited", r.last_audited],
-    ["Grade", r.grade ? r.grade.toUpperCase() : null],
-  ];
+  const summary = [
+    r.country_code ? `Office ${r.country_code}` : "No office country on file",
+    r.grade ? `grade ${String(r.grade).toUpperCase()}` : null,
+    r.last_audited ? `last audited ${r.last_audited}` : null,
+    r.holdings
+      ? `${r.holdings} portfolio companies captured${r.latest_year ? `, most recent ${r.latest_year}` : ""}`
+      : "no portfolio evidence captured yet",
+  ].filter(Boolean).join(" · ");
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px 80px" }}>
@@ -66,24 +73,13 @@ export default function FundPage({ params }: { params: { id: string } }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16,
         alignItems: "start" }}>
         <div>
+          <p style={{ fontSize: 12, color: "#a8a29e", margin: "0 0 14px" }}>
+            {summary}
+          </p>
+
           <div style={card}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
-              {facts.map(([label, value]) => (
-                <div key={label}>
-                  <div style={dt}>{label}</div>
-                  <div style={dd}>
-                    {value == null || value === ""
-                      ? <span style={{ color: "#b45309" }}>—</span> : String(value)}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {r.key_investments && (
-              <>
-                <div style={dt}>Key investments</div>
-                <div style={{ fontSize: 13.5 }}>{r.key_investments}</div>
-              </>
-            )}
+            <RecordEditor key={version} id={id} record={r} book={book}
+              columns={2} onSaved={load} />
           </div>
 
           <div style={card}>
@@ -114,22 +110,9 @@ export default function FundPage({ params }: { params: { id: string } }) {
 
           <div style={card}>
             <strong style={{ fontSize: 15 }}>History</strong>
-            {!data.history?.length && (
-              <p style={{ fontSize: 13, color: "#a8a29e", margin: "8px 0 0" }}>
-                Nothing recorded yet.
-              </p>
-            )}
-            {(data.history || []).map((h: any, i: number) => (
-              <div key={i} style={{ fontSize: 12.5, color: "#57534e", padding: "6px 0",
-                borderTop: "1px solid #f5f5f4" }}>
-                <span style={{ color: "#a8a29e" }}>
-                  {h.changed_at.slice(0, 10)} · {h.source}
-                </span>{" "}
-                {h.field}: <span style={{ color: "#a8a29e" }}>{h.old_value || "—"}</span>
-                {" → "}<strong>{h.new_value || "—"}</strong>
-                {h.rationale && <div style={{ color: "#a8a29e" }}>{h.rationale}</div>}
-              </div>
-            ))}
+            <div style={{ marginTop: 6 }}>
+              <HistoryList history={data.history || []} />
+            </div>
           </div>
         </div>
 
